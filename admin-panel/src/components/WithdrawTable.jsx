@@ -30,12 +30,12 @@ function formatDate(value) {
   }
 }
 
-function formatCurrency(amount) {
-  if (amount === undefined || amount === null || isNaN(amount)) return '—';
+function formatCurrency(value) {
+  if (value === undefined || value === null || isNaN(value)) return '—';
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
-  }).format(Number(amount));
+  }).format(Number(value));
 }
 
 const ACTIONS = {
@@ -121,12 +121,12 @@ export default function WithdrawTable({ items, loading, isFiltered }) {
       batch.set(logRef, {
         [logFields.action]: cfg.logAction,
         [logFields.requestId]: req.id,
-        [logFields.targetUserId]: req.userId || null,
-        [logFields.targetUserEmail]: req.userEmail || null,
+        [logFields.targetUid]: req.uid || null,
+        [logFields.targetEmail]: req.email || null,
         [logFields.previousStatus]: req.status || null,
         [logFields.newStatus]: cfg.newStatus,
-        [logFields.amount]: req.amount ?? null,
-        [logFields.points]: req.points ?? null,
+        [logFields.amountRequested]: req.amountRequested ?? null,
+        [logFields.pointsRequired]: req.pointsRequired ?? null,
         [logFields.reason]: reason || null,
         [logFields.adminUid]: admin.uid,
         [logFields.adminEmail]: admin.email || null,
@@ -198,14 +198,14 @@ export default function WithdrawTable({ items, loading, isFiltered }) {
                 <td>
                   <div className="cell-user">
                     <strong>{r.fullName || '—'}</strong>
-                    <span className="muted">{r.userEmail || r.userId || '—'}</span>
+                    <span className="muted">{r.email || r.uid || '—'}</span>
                   </div>
                 </td>
                 <td className="cell-pix">
                   <code>{r.pixKey || '—'}</code>
                 </td>
-                <td className="num"><strong>{formatCurrency(r.amount)}</strong></td>
-                <td className="num">{r.points ?? '—'}</td>
+                <td className="num"><strong>{formatCurrency(r.amountRequested)}</strong></td>
+                <td className="num">{r.pointsRequired ?? '—'}</td>
                 <td>
                   <StatusBadge status={r.status} />
                   {r.status === 'rejected' && r.rejectionReason && (

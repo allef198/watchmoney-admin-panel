@@ -12,7 +12,7 @@
 //  • Apenas o UID admin pode ler/alterar withdrawRequests e adminLogs.
 //  • Usuários comuns só conseguem ler/escrever seu próprio doc em users/.
 //  • Usuários comuns podem CRIAR uma withdrawRequest com seu próprio
-//    userId e status='pending', mas NÃO podem editá-la depois.
+//    uid e status='pending', mas NÃO podem editá-la depois.
 // =====================================================================
 
 rules_version = '2';
@@ -31,12 +31,12 @@ service cloud.firestore {
     }
     function withdrawCreateFields() {
       return [
-        'userId',
-        'userEmail',
+        'uid',
+        'email',
         'fullName',
         'pixKey',
-        'amount',
-        'points',
+        'amountRequested',
+        'pointsRequired',
         'status',
         'createdAt',
         'updatedAt'
@@ -46,12 +46,12 @@ service cloud.firestore {
       return [
         'action',
         'requestId',
-        'targetUserId',
-        'targetUserEmail',
+        'targetUid',
+        'targetEmail',
         'previousStatus',
         'newStatus',
-        'amount',
-        'points',
+        'amountRequested',
+        'pointsRequired',
         'reason',
         'adminUid',
         'adminEmail',
@@ -79,11 +79,11 @@ service cloud.firestore {
     match /withdrawRequests/{requestId} {
       allow read: if isAdmin()
                   || (request.auth != null
-                      && resource.data.userId == request.auth.uid);
+                      && resource.data.uid == request.auth.uid);
 
       allow create: if request.auth != null
                     && request.resource.data.keys().hasOnly(withdrawCreateFields())
-                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid
                     && request.resource.data.status == 'pending';
 
       allow update, delete: if isAdmin();

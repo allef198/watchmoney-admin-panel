@@ -77,7 +77,7 @@ export default function Logs() {
                     <div className="log-line">
                       <strong>{meta.text}</strong>{' '}
                       saque <code>{log.requestId}</code>
-                      {log.targetUserEmail && <> de <strong>{log.targetUserEmail}</strong></>}
+                      {log.targetEmail && <> de <strong>{log.targetEmail}</strong></>}
                     </div>
                     <div className="log-meta">
                       por <span>{log.adminEmail || log.adminUid}</span> • {formatDate(log.createdAt)}

@@ -78,12 +78,12 @@ campo no Firestore, ajuste esse arquivo antes de mexer nas telas.
 
 | Campo            | Tipo               | Descrição                                  |
 | ---------------- | ------------------ | ------------------------------------------ |
-| `userId`         | string             | UID do usuário no app WatchMoney           |
-| `userEmail`      | string             | E-mail do usuário                          |
+| `uid`            | string             | UID do usuário no app WatchMoney           |
+| `email`          | string             | E-mail do usuário                          |
 | `fullName`       | string             | Nome completo                              |
 | `pixKey`         | string             | Chave Pix                                  |
-| `amount`         | number             | Valor solicitado (BRL)                     |
-| `points`         | number             | Pontos consumidos                          |
+| `amountRequested`| number             | Valor solicitado (BRL)                     |
+| `pointsRequired` | number             | Pontos consumidos                          |
 | `status`         | string             | `pending` \| `approved` \| `rejected` \| `paid` |
 | `createdAt`      | Timestamp          | Criação (gravado pelo app mobile)          |
 | `updatedAt`      | Timestamp          | Última alteração                           |
@@ -98,12 +98,12 @@ campo no Firestore, ajuste esse arquivo antes de mexer nas telas.
 {
   action: 'approve' | 'reject' | 'pay',
   requestId: 'abc123',
-  targetUserId: 'uid-do-usuario',
-  targetUserEmail: 'email@dominio.com',
+  targetUid: 'uid-do-usuario',
+  targetEmail: 'email@dominio.com',
   previousStatus: 'pending',
   newStatus: 'approved',
-  amount: 100,
-  points: 1000,
+  amountRequested: 100,
+  pointsRequired: 1000,
   reason: 'motivo da rejeição (se houver)',
   adminUid: 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1',
   adminEmail: 'admin@dominio.com',

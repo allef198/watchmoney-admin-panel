@@ -68,7 +68,7 @@ export default function Dashboard() {
     return requests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (!term) return true;
-      const haystack = [r.userEmail, r.fullName, r.pixKey]
+      const haystack = [r.email, r.fullName, r.pixKey]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
