@@ -1,34 +1,37 @@
 // =====================================================================
-//  Firestore Security Rules — exemplo para o painel WatchMoney Admin
+//  Firestore Security Rules - WatchMoney Admin Panel
 // ---------------------------------------------------------------------
-//  COMO USAR
-//  1. Vá em Firebase Console → Firestore Database → Regras.
-//  2. Substitua todo o conteúdo pelo bloco abaixo.
-//  3. Confirme que ADMIN_UID é o mesmo UID que está em src/firebase.js.
-//  4. Clique em "Publicar".
+//  Como usar
+//  1. Firebase Console > Firestore Database > Regras.
+//  2. Substitua todo o conteudo pelo bloco abaixo.
+//  3. Publique.
 //
-//  IMPORTANTE
-//  • Estas regras NÃO abrem o banco para qualquer usuário autenticado.
-//  • Apenas o UID admin pode ler/alterar withdrawRequests e adminLogs.
-//  • Usuários comuns só conseguem ler/escrever seu próprio doc em users/.
-//  • Usuários comuns podem CRIAR uma withdrawRequest com seu próprio
-//    uid e status='pending', mas NÃO podem editá-la depois.
+//  Importante
+//  - O site admin usa Firebase Web SDK, nao Firebase Admin SDK.
+//  - Nao use serviceAccount.json, private_key, backend ou app mobile aqui.
+//  - Apenas o ADMIN_UID pode aprovar, rejeitar ou marcar saques como pagos.
 // =====================================================================
 
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // UID do administrador autorizado (mesmo valor de ADMIN_UID em firebase.js)
     function adminUid() {
       return 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1';
     }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
     function isAdmin() {
-      return request.auth != null && request.auth.uid == adminUid();
+      return signedIn() && request.auth.uid == adminUid();
     }
+
     function isOwner(uid) {
-      return request.auth != null && request.auth.uid == uid;
+      return signedIn() && request.auth.uid == uid;
     }
+
     function withdrawCreateFields() {
       return [
         'uid',
@@ -42,6 +45,18 @@ service cloud.firestore {
         'updatedAt'
       ];
     }
+
+    function adminWithdrawUpdateFields() {
+      return [
+        'status',
+        'updatedAt',
+        'reviewedAt',
+        'reviewedBy',
+        'rejectionReason',
+        'paidAt'
+      ];
+    }
+
     function adminLogFields() {
       return [
         'action',
@@ -59,48 +74,79 @@ service cloud.firestore {
       ];
     }
 
-    // ============================================================
-    //  users/{uid}
-    //  - cada usuário lê/edita o próprio doc
-    //  - admin pode ler tudo (útil para o painel)
-    // ============================================================
-    match /users/{uid} {
-      allow read:  if isOwner(uid) || isAdmin();
-      allow create, update: if isOwner(uid);
-      allow delete: if isAdmin();
+    function notificationCreateFields() {
+      return [
+        'uid',
+        'title',
+        'body',
+        'message',
+        'type',
+        'read',
+        'createdAt'
+      ];
     }
 
     // ============================================================
     //  withdrawRequests/{requestId}
-    //  - admin: leitura/alteração total
-    //  - usuário dono: pode CRIAR pedido só com status 'pending'
-    //    e ler o próprio pedido. NÃO pode atualizar/excluir.
+    //  - Admin: le todos os pedidos e atualiza apenas campos de revisao.
+    //  - Usuario Android: cria pedido proprio pendente e le apenas o proprio.
+    //  - Usuario Android: nao aprova, nao rejeita, nao marca como pago.
     // ============================================================
     match /withdrawRequests/{requestId} {
       allow read: if isAdmin()
-                  || (request.auth != null
-                      && resource.data.uid == request.auth.uid);
+                  || (signedIn() && resource.data.uid == request.auth.uid);
 
-      allow create: if request.auth != null
+      allow create: if signedIn()
                     && request.resource.data.keys().hasOnly(withdrawCreateFields())
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.status == 'pending';
 
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data)
+                      .affectedKeys()
+                      .hasOnly(adminWithdrawUpdateFields());
+
+      allow delete: if false;
     }
 
     // ============================================================
     //  adminLogs/{logId}
-    //  - somente admin escreve e lê (registro interno)
+    //  - Apenas admin cria e le logs.
+    //  - Logs sao imutaveis depois de criados.
     // ============================================================
     match /adminLogs/{logId} {
       allow read: if isAdmin();
+
       allow create: if isAdmin()
                     && request.resource.data.keys().hasOnly(adminLogFields());
-      allow update, delete: if false; // logs imutáveis
+
+      allow update, delete: if false;
     }
 
-    // Bloqueia tudo o que não foi explicitamente liberado acima.
+    // ============================================================
+    //  notifications/{notificationId}
+    //  - Usuario le apenas notificacoes proprias.
+    //  - Usuario so pode alterar read para true/false.
+    //  - Admin pode criar notificacoes quando necessario.
+    // ============================================================
+    match /notifications/{notificationId} {
+      allow read: if isAdmin()
+                  || (signedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly(notificationCreateFields());
+
+      allow update: if signedIn()
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.diff(resource.data)
+                      .affectedKeys()
+                      .hasOnly(['read'])
+                    && request.resource.data.read is bool;
+
+      allow delete: if false;
+    }
+
+    // Bloqueia tudo que nao foi explicitamente liberado.
     match /{document=**} {
       allow read, write: if false;
     }
