@@ -21,6 +21,10 @@ export default function Sidebar({ onLogout, user }) {
           <span className="nav-icon">₿</span>
           <span>Saques</span>
         </NavLink>
+        <NavLink to="/financeiro" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-financeiro">
+          <span className="nav-icon">R$</span>
+          <span>Financeiro</span>
+        </NavLink>
         <NavLink to="/logs" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-logs">
           <span className="nav-icon">≡</span>
           <span>Logs</span>

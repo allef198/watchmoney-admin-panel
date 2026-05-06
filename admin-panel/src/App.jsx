@@ -4,6 +4,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth, ADMIN_UID } from './firebase.js';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import Financeiro from './pages/Financeiro.jsx';
 import Logs from './pages/Logs.jsx';
 import Settings from './pages/Settings.jsx';
 import Sidebar from './components/Sidebar.jsx';
@@ -64,6 +65,7 @@ export default function App() {
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/" element={<Dashboard />} />
           <Route path="/saques" element={<Dashboard />} />
+          <Route path="/financeiro" element={<Financeiro />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/configuracoes" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
