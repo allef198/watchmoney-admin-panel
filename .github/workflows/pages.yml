@@ -1,4 +1,4 @@
-name: Deploy admin-panel to GitHub Pages
+name: Deploy GitHub Pages
 
 on:
   push:
@@ -21,13 +21,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: admin-panel
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -36,9 +36,11 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: admin-panel
 
       - name: Build
         run: npm run build
+        working-directory: admin-panel
         env:
           VITE_ADMIN_UID: ${{ vars.VITE_ADMIN_UID || 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1' }}
           VITE_BASE_PATH: /watchmoney-admin-panel/
