@@ -25,6 +25,10 @@ export default function Sidebar({ onLogout, user }) {
           <span className="nav-icon">R$</span>
           <span>Financeiro</span>
         </NavLink>
+        <NavLink to="/usuarios" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-usuarios">
+          <span className="nav-icon">@</span>
+          <span>Usuários</span>
+        </NavLink>
         <NavLink to="/logs" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-logs">
           <span className="nav-icon">≡</span>
           <span>Logs</span>
@@ -32,6 +36,10 @@ export default function Sidebar({ onLogout, user }) {
         <NavLink to="/configuracoes" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-config">
           <span className="nav-icon">⚙</span>
           <span>Configurações</span>
+        </NavLink>
+        <NavLink to="/aviso-global" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-aviso-global">
+          <span className="nav-icon">!</span>
+          <span>Aviso global</span>
         </NavLink>
       </nav>
 

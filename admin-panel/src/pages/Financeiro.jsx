@@ -12,6 +12,13 @@ import {
   mapWithdrawRequestDoc,
 } from '../firestoreSchema.js';
 import StatusBadge from '../components/StatusBadge.jsx';
+import {
+  MISSING,
+  formatCurrency,
+  formatDateTime,
+  formatPoints,
+  toNumber,
+} from '../utils/formatters.js';
 
 const STATUS_FILTERS = [
   { key: 'all', label: 'Todos' },
@@ -27,44 +34,6 @@ const STATUS_CARDS = [
   { key: 'paid', label: 'Pagos', accent: 'paid' },
   { key: 'rejected', label: 'Rejeitados', accent: 'rejected' },
 ];
-
-function toNumber(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const normalized = typeof value === 'string' ? value.replace(',', '.') : value;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function formatCurrency(value) {
-  const parsed = toNumber(value);
-  if (parsed === null) return 'Não informado';
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  }).format(parsed);
-}
-
-function formatPoints(value) {
-  const parsed = toNumber(value);
-  if (parsed === null) return 'Não informado';
-  return `${new Intl.NumberFormat('pt-BR').format(parsed)} pontos`;
-}
-
-function formatDate(value) {
-  if (!value) return '—';
-  try {
-    const d = value.toDate ? value.toDate() : new Date(value);
-    return d.toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return '—';
-  }
-}
 
 function sumAmount(items) {
   return items.reduce((total, item) => total + (toNumber(item.amountRequested) ?? 0), 0);
@@ -241,9 +210,9 @@ function FinanceTable({ items, loading, isFiltered }) {
         <tbody>
           {items.map((request) => (
             <tr key={request.id}>
-              <td className="cell-date">{formatDate(request.createdAt)}</td>
-              <td>{request.email || 'Não informado'}</td>
-              <td>{request.fullName || 'Não informado'}</td>
+              <td className="cell-date">{formatDateTime(request.createdAt, '—')}</td>
+              <td>{request.email || MISSING}</td>
+              <td>{request.fullName || MISSING}</td>
               <td className="num"><strong>{formatCurrency(request.amountRequested)}</strong></td>
               <td className="num">{formatPoints(request.pointsRequired)}</td>
               <td><StatusBadge status={request.status} /></td>

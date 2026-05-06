@@ -2,21 +2,33 @@ import { useEffect, useState } from 'react';
 import { collection, onSnapshot, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../firebase.js';
 import { ADMIN_LOG_FIELDS, FIRESTORE_COLLECTIONS } from '../firestoreSchema.js';
+import { formatDateTime } from '../utils/formatters.js';
 
 const ACTION_LABELS = {
-  approve: { text: 'Aprovou', color: 'approved' },
-  reject: { text: 'Rejeitou', color: 'rejected' },
-  pay: { text: 'Marcou como pago', color: 'paid' },
+  approve: { text: 'Aprovou saque', color: 'approved' },
+  reject: { text: 'Rejeitou saque', color: 'rejected' },
+  pay: { text: 'Marcou saque como pago', color: 'paid' },
+  block_user: { text: 'Bloqueou usuário', color: 'rejected' },
+  unblock_user: { text: 'Desbloqueou usuário', color: 'paid' },
+  update_app_config: { text: 'Atualizou configurações', color: 'approved' },
+  create_global_notification: { text: 'Criou aviso global', color: 'pending' },
 };
 
-function formatDate(value) {
-  if (!value) return '—';
-  try {
-    const d = value.toDate ? value.toDate() : new Date(value);
-    return d.toLocaleString('pt-BR');
-  } catch {
-    return '—';
+function formatSubject(log) {
+  const parts = [];
+  if (log.requestId) parts.push(`saque ${log.requestId}`);
+  if (log.targetEmail) parts.push(log.targetEmail);
+  if (!log.targetEmail && log.targetUid) parts.push(log.targetUid);
+  if (log.title) parts.push(`"${log.title}"`);
+  return parts.join(' · ');
+}
+
+function formatStatusChange(log) {
+  if (log.previousStatus && log.newStatus) {
+    return `status: ${log.previousStatus} → ${log.newStatus}`;
   }
+  if (log.newStatus) return `novo status: ${log.newStatus}`;
+  return '';
 }
 
 export default function Logs() {
@@ -61,7 +73,7 @@ export default function Logs() {
 
       <div className="card">
         {loading ? (
-          <div className="empty-state">Carregando logs…</div>
+          <div className="empty-state">Carregando logs...</div>
         ) : logs.length === 0 ? (
           <div className="empty-state" data-testid="logs-empty">
             Nenhum registro de ação ainda.
@@ -69,19 +81,22 @@ export default function Logs() {
         ) : (
           <ul className="log-list" data-testid="log-list">
             {logs.map((log) => {
-              const meta = ACTION_LABELS[log.action] || { text: log.action, color: 'pending' };
+              const meta = ACTION_LABELS[log.action] || { text: log.action || 'Ação desconhecida', color: 'pending' };
+              const subject = formatSubject(log);
+              const statusChange = formatStatusChange(log);
+
               return (
                 <li key={log.id} className="log-item">
                   <div className={`log-dot dot-${meta.color}`} />
                   <div className="log-content">
                     <div className="log-line">
-                      <strong>{meta.text}</strong>{' '}
-                      saque <code>{log.requestId}</code>
-                      {log.targetEmail && <> de <strong>{log.targetEmail}</strong></>}
+                      <strong>{meta.text}</strong>
+                      {subject && <> · <span>{subject}</span></>}
                     </div>
                     <div className="log-meta">
-                      por <span>{log.adminEmail || log.adminUid}</span> • {formatDate(log.createdAt)}
-                      {log.reason && <> • motivo: <em>“{log.reason}”</em></>}
+                      por <span>{log.adminEmail || log.adminUid || 'admin'}</span> · {formatDateTime(log.createdAt, 'Sem data')}
+                      {statusChange && <> · {statusChange}</>}
+                      {log.reason && <> · motivo: <em>"{log.reason}"</em></>}
                     </div>
                   </div>
                 </li>
