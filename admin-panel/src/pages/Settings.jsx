@@ -29,7 +29,7 @@ export default function Settings() {
 
         <div className="warning-box">
           ⚠ Para a devolução de pontos em rejeições, recomenda-se uma Cloud Function
-          ou regra transacional no backend, em vez de fazer no cliente.
+          ou rotina transacional em ambiente confiável, em vez de fazer no cliente.
         </div>
       </div>
     </div>

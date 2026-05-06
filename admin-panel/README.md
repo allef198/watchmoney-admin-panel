@@ -39,10 +39,12 @@ const firebaseConfig = {
   measurementId: "G-L0PB6FMHNQ"
 };
 
-export const ADMIN_UID = "LUdX7IDd4fhAHK2JvhLeaLbgQFx1";
+export const ADMIN_UID = import.meta.env.VITE_ADMIN_UID || "LUdX7IDd4fhAHK2JvhLeaLbgQFx1";
 ```
 
-Para trocar o admin ou usar outro projeto Firebase, edite **somente** este arquivo.
+Para trocar o admin no deploy do GitHub Pages, crie a variável de repositório
+`VITE_ADMIN_UID`. Sem essa variável, o painel usa
+`LUdX7IDd4fhAHK2JvhLeaLbgQFx1`.
 
 ### Habilitar Authentication
 
@@ -67,6 +69,10 @@ e `adminLogs`. Usuários comuns só leem o próprio documento em `users/{uid}`.
 ---
 
 ## 2. Estrutura esperada no Firestore
+
+Os nomes usados pelo painel ficam centralizados em
+[`src/firestoreSchema.js`](src/firestoreSchema.js). Se o app mobile mudar algum
+campo no Firestore, ajuste esse arquivo antes de mexer nas telas.
 
 ### `withdrawRequests/{requestId}`
 
@@ -131,54 +137,49 @@ npm run preview     # serve /dist localmente para testar
 
 ## 5. Deploy no GitHub Pages
 
-### 5.1. Crie o repositório no GitHub
+Este repositório já está configurado para publicar pelo GitHub Actions em:
 
-Ex.: `https://github.com/SEU_USUARIO/watchmoney-admin`
+```text
+https://allef198.github.io/watchmoney-admin-panel/
+```
 
-### 5.2. Ajuste o `base` em `vite.config.js`
+### 5.1. Base do Vite
 
-O `base` precisa ser `/<nome-do-repo>/`:
+O `base` padrão em `vite.config.js` é:
 
 ```js
 export default defineConfig({
   plugins: [react()],
-  base: '/watchmoney-admin/', // ← troque pelo nome do seu repo
+  base: process.env.VITE_BASE_PATH || '/watchmoney-admin-panel/',
 });
 ```
 
 > Se você usar **domínio customizado** ligado ao GitHub Pages na raiz, use `base: '/'`.
 
-### 5.3. Suba o código e publique
+### 5.2. Publicação automática
 
-```bash
-git init
-git add .
-git commit -m "feat: painel admin watchmoney"
-git branch -M main
-git remote add origin https://github.com/SEU_USUARIO/watchmoney-admin.git
-git push -u origin main
+O workflow de Pages fica em:
 
-# publica /dist na branch gh-pages automaticamente:
-npm run deploy
+```text
+.github/workflows/pages.yml
 ```
 
-### 5.4. Ative o GitHub Pages
+Ele roda `npm install` e `npm run build` dentro de `admin-panel/` a cada push na
+branch `main`, enviando `admin-panel/dist` para o GitHub Pages.
+
+### 5.3. Ative o GitHub Pages
 
 No repositório → **Settings → Pages**:
 
-- **Source**: `Deploy from a branch`
-- **Branch**: `gh-pages` / `(root)`
+- **Source**: `GitHub Actions`
 - Salve.
 
-A URL final será:
-`https://SEU_USUARIO.github.io/watchmoney-admin/`
-
-### 5.5. Autorize o domínio no Firebase Auth
+### 5.4. Autorize o domínio no Firebase Auth
 
 No console do Firebase → **Authentication → Settings → Authorized domains**,
 adicione:
 
-- `SEU_USUARIO.github.io`
+- `allef198.github.io`
 
 Caso contrário o login falhará com `auth/unauthorized-domain`.
 
@@ -193,7 +194,7 @@ Caso contrário o login falhará com `auth/unauthorized-domain`.
 | **Marcar como pago**| `status=paid`, `paidAt`, `reviewedBy`, `reviewedAt`, `updatedAt`              | sim (`action: pay`)     |
 
 > Em rejeições, **a devolução de pontos** ao saldo do usuário deve ser feita
-> num backend confiável (Cloud Function, regra transacional) — não no cliente.
+> em Cloud Function ou rotina transacional em ambiente confiável — não no cliente.
 
 ---
 

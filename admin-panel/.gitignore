@@ -9,3 +9,6 @@ dist-ssr
 serviceAccount.json
 service-account*.json
 firebase-adminsdk*.json
+*private_key*
+*.key
+*.pem

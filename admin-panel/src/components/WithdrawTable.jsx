@@ -6,6 +6,11 @@ import {
   collection,
 } from 'firebase/firestore';
 import { db, auth, ADMIN_UID } from '../firebase.js';
+import {
+  ADMIN_LOG_FIELDS,
+  FIRESTORE_COLLECTIONS,
+  WITHDRAW_REQUEST_FIELDS,
+} from '../firestoreSchema.js';
 import StatusBadge from './StatusBadge.jsx';
 import ConfirmModal from './ConfirmModal.jsx';
 
@@ -50,7 +55,7 @@ const ACTIONS = {
     variant: 'danger',
     requireReason: true,
     reasonPlaceholder: 'Ex.: Chave Pix incorreta…',
-    warning: 'A devolução de pontos deve ser feita com segurança no backend ou por regra transacional.',
+    warning: 'A devolução de pontos deve ser feita com segurança em Cloud Function ou rotina transacional.',
     newStatus: 'rejected',
     logAction: 'reject',
   },
@@ -93,37 +98,39 @@ export default function WithdrawTable({ items, loading, isFiltered }) {
     setWorking(true);
     try {
       const batch = writeBatch(db);
-      const requestRef = doc(db, 'withdrawRequests', req.id);
-      const logRef = doc(collection(db, 'adminLogs'));
+      const requestRef = doc(db, FIRESTORE_COLLECTIONS.withdrawRequests, req.id);
+      const logRef = doc(collection(db, FIRESTORE_COLLECTIONS.adminLogs));
+      const requestFields = WITHDRAW_REQUEST_FIELDS;
+      const logFields = ADMIN_LOG_FIELDS;
 
       const updateData = {
-        status: cfg.newStatus,
-        updatedAt: serverTimestamp(),
-        reviewedAt: serverTimestamp(),
-        reviewedBy: admin.uid,
+        [requestFields.status]: cfg.newStatus,
+        [requestFields.updatedAt]: serverTimestamp(),
+        [requestFields.reviewedAt]: serverTimestamp(),
+        [requestFields.reviewedBy]: admin.uid,
       };
       if (cfg.newStatus === 'rejected') {
-        updateData.rejectionReason = reason || '';
+        updateData[requestFields.rejectionReason] = reason || '';
       }
       if (cfg.newStatus === 'paid') {
-        updateData.paidAt = serverTimestamp();
+        updateData[requestFields.paidAt] = serverTimestamp();
       }
 
       batch.update(requestRef, updateData);
 
       batch.set(logRef, {
-        action: cfg.logAction,
-        requestId: req.id,
-        targetUserId: req.userId || null,
-        targetUserEmail: req.userEmail || null,
-        previousStatus: req.status || null,
-        newStatus: cfg.newStatus,
-        amount: req.amount ?? null,
-        points: req.points ?? null,
-        reason: reason || null,
-        adminUid: admin.uid,
-        adminEmail: admin.email || null,
-        createdAt: serverTimestamp(),
+        [logFields.action]: cfg.logAction,
+        [logFields.requestId]: req.id,
+        [logFields.targetUserId]: req.userId || null,
+        [logFields.targetUserEmail]: req.userEmail || null,
+        [logFields.previousStatus]: req.status || null,
+        [logFields.newStatus]: cfg.newStatus,
+        [logFields.amount]: req.amount ?? null,
+        [logFields.points]: req.points ?? null,
+        [logFields.reason]: reason || null,
+        [logFields.adminUid]: admin.uid,
+        [logFields.adminEmail]: admin.email || null,
+        [logFields.createdAt]: serverTimestamp(),
       });
 
       await batch.commit();

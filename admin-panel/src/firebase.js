@@ -16,7 +16,7 @@ const firebaseConfig = {
 
 // UID do administrador autorizado a acessar o painel.
 // Apenas este UID terá permissão de ler/alterar withdrawRequests pelo painel.
-export const ADMIN_UID = 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1';
+export const ADMIN_UID = import.meta.env.VITE_ADMIN_UID || 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

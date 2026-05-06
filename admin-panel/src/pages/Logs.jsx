@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../firebase.js';
+import { ADMIN_LOG_FIELDS, FIRESTORE_COLLECTIONS } from '../firestoreSchema.js';
 
 const ACTION_LABELS = {
   approve: { text: 'Aprovou', color: 'approved' },
@@ -24,7 +25,11 @@ export default function Logs() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const q = query(collection(db, 'adminLogs'), orderBy('createdAt', 'desc'), limit(200));
+    const q = query(
+      collection(db, FIRESTORE_COLLECTIONS.adminLogs),
+      orderBy(ADMIN_LOG_FIELDS.createdAt, 'desc'),
+      limit(200)
+    );
     const unsub = onSnapshot(
       q,
       (snap) => {

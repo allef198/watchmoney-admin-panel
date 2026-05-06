@@ -29,6 +29,35 @@ service cloud.firestore {
     function isOwner(uid) {
       return request.auth != null && request.auth.uid == uid;
     }
+    function withdrawCreateFields() {
+      return [
+        'userId',
+        'userEmail',
+        'fullName',
+        'pixKey',
+        'amount',
+        'points',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ];
+    }
+    function adminLogFields() {
+      return [
+        'action',
+        'requestId',
+        'targetUserId',
+        'targetUserEmail',
+        'previousStatus',
+        'newStatus',
+        'amount',
+        'points',
+        'reason',
+        'adminUid',
+        'adminEmail',
+        'createdAt'
+      ];
+    }
 
     // ============================================================
     //  users/{uid}
@@ -53,6 +82,7 @@ service cloud.firestore {
                       && resource.data.userId == request.auth.uid);
 
       allow create: if request.auth != null
+                    && request.resource.data.keys().hasOnly(withdrawCreateFields())
                     && request.resource.data.userId == request.auth.uid
                     && request.resource.data.status == 'pending';
 
@@ -64,7 +94,9 @@ service cloud.firestore {
     //  - somente admin escreve e lê (registro interno)
     // ============================================================
     match /adminLogs/{logId} {
-      allow read, create: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+                    && request.resource.data.keys().hasOnly(adminLogFields());
       allow update, delete: if false; // logs imutáveis
     }
 

@@ -7,6 +7,11 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase.js';
 import WithdrawTable from '../components/WithdrawTable.jsx';
+import {
+  FIRESTORE_COLLECTIONS,
+  WITHDRAW_REQUEST_FIELDS,
+  mapWithdrawRequestDoc,
+} from '../firestoreSchema.js';
 
 const FILTERS = [
   { key: 'all', label: 'Todos' },
@@ -26,11 +31,14 @@ export default function Dashboard() {
   useEffect(() => {
     setLoading(true);
     setError('');
-    const q = query(collection(db, 'withdrawRequests'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, FIRESTORE_COLLECTIONS.withdrawRequests),
+      orderBy(WITHDRAW_REQUEST_FIELDS.createdAt, 'desc')
+    );
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const list = snap.docs.map(mapWithdrawRequestDoc);
         setRequests(list);
         setLoading(false);
       },
