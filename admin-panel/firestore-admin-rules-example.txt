@@ -1,0 +1,76 @@
+// =====================================================================
+//  Firestore Security Rules — exemplo para o painel WatchMoney Admin
+// ---------------------------------------------------------------------
+//  COMO USAR
+//  1. Vá em Firebase Console → Firestore Database → Regras.
+//  2. Substitua todo o conteúdo pelo bloco abaixo.
+//  3. Confirme que ADMIN_UID é o mesmo UID que está em src/firebase.js.
+//  4. Clique em "Publicar".
+//
+//  IMPORTANTE
+//  • Estas regras NÃO abrem o banco para qualquer usuário autenticado.
+//  • Apenas o UID admin pode ler/alterar withdrawRequests e adminLogs.
+//  • Usuários comuns só conseguem ler/escrever seu próprio doc em users/.
+//  • Usuários comuns podem CRIAR uma withdrawRequest com seu próprio
+//    userId e status='pending', mas NÃO podem editá-la depois.
+// =====================================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // UID do administrador autorizado (mesmo valor de ADMIN_UID em firebase.js)
+    function adminUid() {
+      return 'LUdX7IDd4fhAHK2JvhLeaLbgQFx1';
+    }
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == adminUid();
+    }
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // ============================================================
+    //  users/{uid}
+    //  - cada usuário lê/edita o próprio doc
+    //  - admin pode ler tudo (útil para o painel)
+    // ============================================================
+    match /users/{uid} {
+      allow read:  if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid);
+      allow delete: if isAdmin();
+    }
+
+    // ============================================================
+    //  withdrawRequests/{requestId}
+    //  - admin: leitura/alteração total
+    //  - usuário dono: pode CRIAR pedido só com status 'pending'
+    //    e ler o próprio pedido. NÃO pode atualizar/excluir.
+    // ============================================================
+    match /withdrawRequests/{requestId} {
+      allow read: if isAdmin()
+                  || (request.auth != null
+                      && resource.data.userId == request.auth.uid);
+
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ============================================================
+    //  adminLogs/{logId}
+    //  - somente admin escreve e lê (registro interno)
+    // ============================================================
+    match /adminLogs/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false; // logs imutáveis
+    }
+
+    // Bloqueia tudo o que não foi explicitamente liberado acima.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

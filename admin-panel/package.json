@@ -1,0 +1,24 @@
+{
+  "name": "watchmoney-admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Painel administrativo do WatchMoney para aprovar, rejeitar e marcar saques como pagos.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && gh-pages -d dist"
+  },
+  "dependencies": {
+    "firebase": "^10.13.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "gh-pages": "^6.1.1",
+    "vite": "^5.4.8"
+  }
+}
