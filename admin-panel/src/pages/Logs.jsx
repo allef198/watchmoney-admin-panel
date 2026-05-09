@@ -1,14 +1,19 @@
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, getDocs, query, orderBy, limit, startAfter } from 'firebase/firestore';
 import { db } from '../firebase';
-import { FIRESTORE_COLLECTIONS } from '../firestoreSchema';
+import { FIRESTORE_COLLECTIONS, mapAdminLogDoc } from '../firestoreSchema';
 import { translateAction, getLogType, exportLogsToCSV } from '../utils/logUtils';
-import { formatDateTime } from '../utils/formatters';
+import { formatDateTime, toDate } from '../utils/formatters';
 import LogDetailsModal from '../components/LogDetailsModal';
 import LogFilters from '../components/LogFilters';
 
 const PAGE_SIZE = 50;
+
+const getShortValue = (value) => {
+    if (typeof value !== 'string' || value.length < 8) return value || 'N/A';
+    return `${value.substring(0, 8)}...`;
+}
 
 const Logs = () => {
     const [logs, setLogs] = useState([]);
@@ -21,7 +26,7 @@ const Logs = () => {
     const [typeFilter, setTypeFilter] = useState('Todos');
     const [selectedLog, setSelectedLog] = useState(null);
 
-    const fetchLogs = async (loadMore = false) => {
+    const fetchLogs = useCallback(async (loadMore = false) => {
         if (!loadMore) setLoading(true);
         setError(null);
         try {
@@ -35,7 +40,7 @@ const Logs = () => {
                 return;
             }
 
-            const newLogs = docSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const newLogs = docSnap.docs.map(mapAdminLogDoc);
             setLastDoc(docSnap.docs[docSnap.docs.length - 1]);
             setLogs(prev => loadMore ? [...prev, ...newLogs] : newLogs);
             setHasMore(docSnap.docs.length === PAGE_SIZE);
@@ -45,12 +50,13 @@ const Logs = () => {
         } finally {
             if (!loadMore) setLoading(false);
         }
-    };
+    }, [lastDoc]);
 
-    useEffect(() => { fetchLogs(); }, []);
+    useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
     const filteredLogs = useMemo(() => {
-        return logs.filter(log => {
+        const safeLogs = logs || [];
+        return safeLogs.filter(log => {
             const typeMatch = typeFilter === 'Todos' || getLogType(log.action) === typeFilter;
             if (!typeMatch) return false;
 
@@ -72,24 +78,28 @@ const Logs = () => {
     const summaryStats = useMemo(() => {
         const now = new Date();
         const last24h = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+        const safeLogs = logs || [];
         return {
-            total: logs.length,
-            saque: logs.filter(l => getLogType(l.action) === 'Saque').length,
-            usuario: logs.filter(l => getLogType(l.action) === 'Usuário').length,
-            configuracao: logs.filter(l => getLogType(l.action) === 'Configuração').length,
-            pontos: logs.filter(l => getLogType(l.action) === 'Pontos').length,
-            last24h: logs.filter(l => l.createdAt?.toDate() > last24h).length,
+            total: safeLogs.length,
+            saque: safeLogs.filter(l => getLogType(l.action) === 'Saque').length,
+            usuario: safeLogs.filter(l => getLogType(l.action) === 'Usuário').length,
+            configuracao: safeLogs.filter(l => getLogType(l.action) === 'Configuração').length,
+            pontos: safeLogs.filter(l => getLogType(l.action) === 'Pontos').length,
+            last24h: safeLogs.filter(l => {
+                const logDate = toDate(l.createdAt ?? l.timestamp);
+                return logDate && logDate > last24h;
+            }).length,
         };
     }, [logs]);
 
-    if (loading && logs.length === 0) return <div className="loading-screen">Carregando logs...</div>;
+    if (loading && !logs.length) return <div className="loading-screen">Carregando logs...</div>;
     if (error) return <div className="alert alert-danger">{error}</div>;
 
     return (
         <>
             <div className="page-header">
                 <h1>Logs de Auditoria</h1>
-                <button className="btn btn-primary" onClick={() => exportLogsToCSV(filteredLogs)} disabled={filteredLogs.length === 0}>Exportar CSV</button>
+                <button className="btn btn-primary" onClick={() => exportLogsToCSV(filteredLogs)} disabled={!filteredLogs || filteredLogs.length === 0}>Exportar CSV</button>
             </div>
 
             <div className="stats-grid-4">
@@ -114,11 +124,11 @@ const Logs = () => {
                             {filteredLogs.length > 0 ? (
                                 filteredLogs.map(log => (
                                     <tr key={log.id}>
-                                        <td>{log.createdAt ? formatDateTime(log.createdAt.toDate()) : 'N/A'}</td>
-                                        <td>{log.adminEmail || log.adminUid?.substring(0, 8) || 'N/A'}</td>
+                                        <td>{formatDateTime(log.createdAt ?? log.timestamp)}</td>
+                                        <td>{log.adminEmail || getShortValue(log.adminUid)}</td>
                                         <td>{translateAction(log.action)}</td>
                                         <td><span className={`badge-logtype ${getLogType(log.action).toLowerCase()}`}>{getLogType(log.action)}</span></td>
-                                        <td>{(log.targetId || log.targetUid || log.requestId)?.substring(0, 8) || 'N/A'}</td>
+                                        <td>{getShortValue(log.targetId || log.targetUid || log.requestId)}</td>
                                         <td><button onClick={() => setSelectedLog(log)} className="btn btn-sm btn-ghost">Detalhes</button></td>
                                     </tr>
                                 ))
@@ -142,7 +152,7 @@ const Logs = () => {
 const StatCard = ({ title, value }) => (
     <div className="card card-body">
         <h3 className="stat-title-sm">{title}</h3>
-        <p className="stat-value-lg">{value}</p>
+        <p className="stat-value-lg">{String(value) ?? '0'}</p>
     </div>
 );
 

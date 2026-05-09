@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   collection,
   onSnapshot,
@@ -20,7 +20,8 @@ import {
   formatDateTime,
   formatPoints,
   toNumber,
-  MISSING
+  MISSING,
+  toDate
 } from '../utils/formatters.js';
 import WithdrawDetailsModal from '../components/WithdrawDetailsModal';
 import AdminNoteModal from '../components/AdminNoteModal';
@@ -59,7 +60,7 @@ const Financeiro = () => {
   const [sort, setSort] = useState('most-recent');
   const [search, setSearch] = useState('');
 
-  const [modal, setModal] = useState({ type: null, request: null }); // details, note, approve, reject, pay
+  const [modal, setModal] = useState({ type: null, request: null });
   const [feedback, setFeedback] = useState(null);
 
   useEffect(() => {
@@ -75,7 +76,7 @@ const Financeiro = () => {
   }, []);
 
   const filteredAndSortedRequests = useMemo(() => {
-    let filtered = requests;
+    let filtered = requests || [];
 
     if (statusFilter !== 'all') filtered = filtered.filter(r => r.status === statusFilter);
 
@@ -86,7 +87,10 @@ const Financeiro = () => {
         if(dateFilter === 'last7') limit.setDate(now.getDate() - 7);
         if(dateFilter === 'last30') limit.setDate(now.getDate() - 30);
 
-        filtered = filtered.filter(r => r.createdAt && r.createdAt.toDate() >= limit);
+        filtered = filtered.filter(r => {
+          const createdAtDate = toDate(r.createdAt);
+          return createdAtDate && createdAtDate >= limit;
+        });
     }
 
     if (search) {
@@ -94,14 +98,13 @@ const Financeiro = () => {
         filtered = filtered.filter(r => 
             (r.email || '').toLowerCase().includes(term) || 
             (r.fullName || '').toLowerCase().includes(term) || 
-            r.uid.toLowerCase().includes(term) ||
+            (r.uid || '').toLowerCase().includes(term) ||
             (r.pixKey || '').toLowerCase().includes(term)
         );
     }
 
-    if (sort === 'highest-value') filtered.sort((a,b) => (b.amountRequested || 0) - (a.amountRequested || 0));
-    if (sort === 'lowest-value') filtered.sort((a,b) => (a.amountRequested || 0) - (b.amountRequested || 0));
-    // Dates are already sorted by most recent by default from Firestore query
+    if (sort === 'highest-value') filtered.sort((a,b) => (b.amountRequested ?? b.amount ?? 0) - (a.amountRequested ?? a.amount ?? 0));
+    if (sort === 'lowest-value') filtered.sort((a,b) => (a.amountRequested ?? a.amount ?? 0) - (b.amountRequested ?? b.amount ?? 0));
     if (sort === 'oldest') filtered.reverse();
 
     return filtered;
@@ -109,16 +112,17 @@ const Financeiro = () => {
 
     const summary = useMemo(() => {
         const s = { pending: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, paid: { count: 0, total: 0 }, rejected: { count: 0, total: 0 } };
-        requests.forEach(r => {
+        (requests || []).forEach(r => {
             if (s[r.status]) {
                 s[r.status].count++;
-                s[r.status].total += toNumber(r.amountRequested) || 0;
+                s[r.status].total += toNumber(r.amountRequested ?? r.amount) || 0;
             }
         });
         return s;
     }, [requests]);
 
-  const handleAction = async (type, request, reason = null) => {
+  const handleAction = useCallback(async (type, request, reason = null) => {
+    if (!request || !request.id) return;
       try {
         const batch = writeBatch(db);
         const requestRef = doc(db, FIRESTORE_COLLECTIONS.withdrawRequests, request.id);
@@ -134,7 +138,7 @@ const Financeiro = () => {
         const updateData = {
             status: newStatus,
             updatedAt: serverTimestamp(),
-            reviewedBy: auth.currentUser.uid,
+            reviewedBy: auth.currentUser?.uid || 'unknown',
         };
 
         if(type === 'reject') updateData.rejectionReason = reason;
@@ -146,7 +150,7 @@ const Financeiro = () => {
             [ADMIN_LOG_FIELDS.action]: logAction,
             [ADMIN_LOG_FIELDS.targetId]: request.id,
             [ADMIN_LOG_FIELDS.targetUid]: request.uid,
-            [ADMIN_LOG_FIELDS.adminUid]: auth.currentUser.uid,
+            [ADMIN_LOG_FIELDS.adminUid]: auth.currentUser?.uid || 'unknown',
             [ADMIN_LOG_FIELDS.previousStatus]: request.status,
             [ADMIN_LOG_FIELDS.newStatus]: newStatus,
             [ADMIN_LOG_FIELDS.reason]: reason || null,
@@ -156,15 +160,16 @@ const Financeiro = () => {
         await batch.commit();
         setFeedback({type: 'success', message: 'Ação executada com sucesso!'});
       } catch (err) {
+        console.error(err);
         setFeedback({type: 'error', message: `Erro: ${err.message}`});
       }
       setModal({ type: null, request: null });
-  };
+  }, []);
   
   const exportToCSV = () => {
       const headers = ['ID do Saque', 'UID', 'Nome', 'Email', 'Valor', 'Pontos', 'Chave Pix', 'Tipo Pix', 'Status', 'Data de Solicitação', 'Observação Interna'];
-      const rows = filteredAndSortedRequests.map(r => 
-          [r.id, r.uid, r.fullName, r.email, r.amountRequested, r.pointsRequired, r.pixKey, r.pixKeyType, r.status, formatDateTime(r.createdAt), r.adminNote].join(',')
+      const rows = (filteredAndSortedRequests || []).map(r => 
+          [r.id, r.uid, r.fullName, r.email, r.amountRequested ?? r.amount, r.pointsRequired, r.pixKey, r.pixKeyType, r.status, formatDateTime(r.createdAt), r.adminNote].join(',')
       );
       const csvContent = [headers.join(','), ...rows].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -175,6 +180,7 @@ const Financeiro = () => {
   };
 
   const copyToClipboard = (text) => {
+    if(!text) return;
       navigator.clipboard.writeText(text).then(() => setFeedback({type: 'success', message: 'Copiado!'}));
   }
 
@@ -189,9 +195,9 @@ const Financeiro = () => {
       </section>
       <section className="toolbar">
           <input type="search" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>{STATUS_FILTERS.map(f=><option value={f.key}>{f.label}</option>)}</select>
-          <select value={dateFilter} onChange={e => setDateFilter(e.target.value)}>{DATE_FILTERS.map(f=><option value={f.key}>{f.label}</option>)}</select>
-          <select value={sort} onChange={e => setSort(e.target.value)}>{SORT_OPTIONS.map(o=><option value={o.key}>{o.label}</option>)}</select>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>{(STATUS_FILTERS || []).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
+          <select value={dateFilter} onChange={e => setDateFilter(e.target.value)}>{(DATE_FILTERS || []).map(f=><option key={f.key} value={f.key}>{f.label}</option>)}</select>
+          <select value={sort} onChange={e => setSort(e.target.value)}>{(SORT_OPTIONS || []).map(o=><option key={o.key} value={o.key}>{o.label}</option>)}</select>
           <button onClick={exportToCSV} className="btn">Exportar CSV</button>
       </section>
 
@@ -211,11 +217,11 @@ const Financeiro = () => {
                     </tr>
                 </thead>
                 <tbody>
-                    {filteredAndSortedRequests.map(r => (
+                    {(filteredAndSortedRequests || []).map(r => (
                         <tr key={r.id}>
                             <td><div><strong>{r.fullName || MISSING}</strong><span className="muted">{r.email || MISSING}</span></div></td>
-                            <td>{formatCurrency(r.amountRequested)}</td>
-                            <td><div><span>{r.pixKey}</span><button onClick={()=>copyToClipboard(r.pixKey)}>Copiar</button></div></td>
+                            <td>{formatCurrency(r.amountRequested ?? r.amount)}</td>
+                            <td><div><span>{r.pixKey || MISSING}</span><button onClick={()=>copyToClipboard(r.pixKey)}>Copiar</button></div></td>
                             <td><StatusBadge status={r.status} /></td>
                             <td>{formatDateTime(r.createdAt)}</td>
                             <td className="actions-col">

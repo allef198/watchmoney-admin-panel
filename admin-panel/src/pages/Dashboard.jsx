@@ -8,7 +8,12 @@ import { formatCurrency, formatPoints, formatDateTime } from '../utils/formatter
 import StatusBadge from '../components/StatusBadge.jsx';
 import StatCard from '../components/StatCard.jsx';
 
-const safeSum = (arr, field) => arr.reduce((acc, item) => acc + (Number(item[field]) || 0), 0);
+const safeSum = (arr, field) => (arr || []).reduce((acc, item) => acc + (Number(item[field]) || 0), 0);
+
+const getShortUid = (value) => {
+  if (!value || typeof value !== 'string') return 'UID não informado';
+  return value.slice(0, 8);
+};
 
 export default function Dashboard() {
   const [data, setData] = useState({ users: [], withdrawRequests: [], appConfig: {}, globalNotifications: [], adminLogs: [] });
@@ -55,25 +60,25 @@ export default function Dashboard() {
   }, [fetchData]);
 
   const stats = useMemo(() => {
-    const { users, withdrawRequests, globalNotifications, appConfig } = data;
-    const withdrawByStatus = status => withdrawRequests.filter(r => r.status === status);
+    const { users = [], withdrawRequests = [], globalNotifications = [], appConfig = {} } = data;
+    const withdrawByStatus = status => (withdrawRequests || []).filter(r => r.status === status);
     
     const pendingWithdraws = withdrawByStatus('pending');
     const paidWithdraws = withdrawByStatus('paid');
     
-    const topUsersByPoints = [...users].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+    const topUsersByPoints = [...(users || [])].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
 
     return {
-      totalUsers: users.length,
-      activeUsers: users.filter(u => !u.isBlocked).length,
-      pendingWithdrawsSum: safeSum(pendingWithdraws, 'amount'),
+      totalUsers: (users || []).length,
+      activeUsers: (users || []).filter(u => !u.blocked).length,
+      pendingWithdrawsSum: safeSum(pendingWithdraws, 'amountRequested'),
       pendingWithdrawsCount: pendingWithdraws.length,
-      totalPaidSum: safeSum(paidWithdraws, 'amount'),
+      totalPaidSum: safeSum(paidWithdraws, 'amountRequested'),
       totalPointsInCirculation: safeSum(users, 'points'),
-      activeNotices: globalNotifications.filter(n => n.isActive).length,
+      activeNotices: (globalNotifications || []).filter(n => n.active).length,
       quickSettings: { 
         ...appConfig, 
-        globalNoticeActive: globalNotifications.some(n => n.isActive) 
+        globalNoticeActive: (globalNotifications || []).some(n => n.active) 
       },
       topUsers: topUsersByPoints,
     };
@@ -100,21 +105,19 @@ export default function Dashboard() {
 
       <div className="dashboard-grid">
         <div className="dashboard-column">
-          <RecentWithdrawsCard withdrawRequests={data.withdrawRequests} />
-          <TopUsersCard topUsers={stats.topUsers} />
+          <RecentWithdrawsCard withdrawRequests={data.withdrawRequests || []} />
+          <TopUsersCard topUsers={stats.topUsers || []} />
         </div>
         <div className="dashboard-column">
-            <QuickSettingsCard settings={stats.quickSettings} />
-            <RecentLogsCard adminLogs={data.adminLogs} />
+            <QuickSettingsCard settings={stats.quickSettings || {}} />
+            <RecentLogsCard adminLogs={data.adminLogs || []} />
         </div>
       </div>
     </>
   );
 }
 
-// Sub-componentes para clareza
-
-const RecentWithdrawsCard = ({ withdrawRequests }) => (
+const RecentWithdrawsCard = ({ withdrawRequests = [] }) => (
   <div className="card">
     <div className="card-header">
       <h2 className="card-title">Últimos Saques Solicitados</h2>
@@ -126,8 +129,8 @@ const RecentWithdrawsCard = ({ withdrawRequests }) => (
           <tbody>
             {withdrawRequests.slice(0, 5).map(req => (
               <tr key={req.id}>
-                <td>{req.userEmail || req.userId.substring(0, 8)}</td>
-                <td>{formatCurrency(req.amount)}</td>
+                <td>{req.userEmail || req.email || req.fullName || getShortUid(req.uid || req.userId)}</td>
+                <td>{formatCurrency(req.amountRequested ?? req.amount ?? 0)}</td>
                 <td><StatusBadge status={req.status} /></td>
               </tr>
             ))}
@@ -143,7 +146,7 @@ const RecentWithdrawsCard = ({ withdrawRequests }) => (
   </div>
 );
 
-const TopUsersCard = ({ topUsers }) => (
+const TopUsersCard = ({ topUsers = [] }) => (
   <div className="card">
     <div className="card-header">
       <h2 className="card-title">Top 5 Usuários (por pontos)</h2>
@@ -155,7 +158,7 @@ const TopUsersCard = ({ topUsers }) => (
           <tbody>
             {topUsers.map(user => (
               <tr key={user.id}>
-                <td>{user.email}</td>
+                <td>{user.email || 'Email não informado'}</td>
                 <td>{formatPoints(user.points)}</td>
               </tr>
             ))}
@@ -171,14 +174,14 @@ const TopUsersCard = ({ topUsers }) => (
   </div>
 );
 
-const QuickSettingsCard = ({ settings }) => (
+const QuickSettingsCard = ({ settings = {} }) => (
     <div className="card">
         <div className="card-header"><h2 className="card-title">Configurações Rápidas</h2></div>
         <div className="card-body">
-          <SettingItem label="Saques" value={settings.withdrawalsEnabled ? "Ativados" : "Desativados"} />
+          <SettingItem label="Saques" value={settings.withdrawEnabled ? "Ativados" : "Desativados"} />
           <SettingItem label="Modo Manutenção" value={settings.maintenanceMode ? "Ativo" : "Inativo"} />
           <SettingItem label="Pontos por Real" value={formatPoints(settings.pointsPerReal)} />
-          <SettingItem label="Saque Mínimo" value={formatCurrency(settings.minWithdrawalAmount)} />
+          <SettingItem label="Saque Mínimo" value={formatCurrency(settings.minWithdrawAmount)} />
         </div>
         <div className="card-footer">
            <Link to="/configuracoes" className="btn btn-sm btn-ghost">Alterar Configurações</Link>
@@ -186,14 +189,14 @@ const QuickSettingsCard = ({ settings }) => (
    </div>
 );
 
-const RecentLogsCard = ({ adminLogs }) => (
+const RecentLogsCard = ({ adminLogs = [] }) => (
     <div className="card">
         <div className="card-header"><h2 className="card-title">Logs de Atividade Recente</h2></div>
         <div className="card-body">
            {adminLogs.length > 0 ? adminLogs.map(log => (
                <div key={log.id} className="log-item-dashboard">
                   <p><strong>{log.adminEmail || 'Sistema'}</strong> {log.action}</p>
-                  <p className="muted text-sm">{formatDateTime(log.timestamp)}</p>
+                  <p className="muted text-sm">{formatDateTime(log.createdAt ?? log.timestamp)}</p>
                </div>
            )) : <p className="muted">Nenhum log recente.</p>}
         </div>

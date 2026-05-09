@@ -1,14 +1,19 @@
 
-import { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, query, where, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FIRESTORE_COLLECTIONS, mapUserDoc } from '../firestoreSchema';
-import { formatDateTime } from '../utils/formatters';
+import { formatDateTime, formatPoints } from '../utils/formatters';
 import { exportUsersToCSV } from '../utils/export';
 import UserDetailsModal from '../components/UserDetailsModal';
 import AdjustPointsModal from '../components/AdjustPointsModal';
 import ConfirmModal from '../components/ConfirmModal';
 import { logAdminAction } from '../utils/logUtils';
+
+const getShortUid = (value) => {
+  if (!value || typeof value !== 'string') return 'UID inválido';
+  return value.slice(0, 8);
+};
 
 const Users = () => {
   const [users, setUsers] = useState([]);
@@ -23,29 +28,33 @@ const Users = () => {
   const [isConfirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        const usersCollection = collection(db, FIRESTORE_COLLECTIONS.users);
-        const usersSnapshot = await getDocs(usersCollection);
-        const usersList = usersSnapshot.docs.map(mapUserDoc);
-        setUsers(usersList);
-      } catch (err) {
-        console.error(err);
-        setError('Não foi possível carregar os usuários.');
-      }
+  const fetchUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const usersCollection = collection(db, FIRESTORE_COLLECTIONS.users);
+      const usersSnapshot = await getDocs(usersCollection);
+      const usersList = usersSnapshot.docs.map(mapUserDoc);
+      setUsers(usersList);
+    } catch (err) {
+      console.error(err);
+      setError('Não foi possível carregar os usuários.');
+    } finally {
       setLoading(false);
-    };
-    fetchUsers();
+    }
   }, []);
 
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
   const filteredUsers = useMemo(() => {
-    return users.filter(user => {
+    const safeUsers = users || [];
+    return safeUsers.filter(user => {
+      if (!user) return false;
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
         user.email?.toLowerCase().includes(searchLower) || 
-        user.uid.toLowerCase().includes(searchLower);
+        user.uid?.toLowerCase().includes(searchLower);
 
       const matchesFilter = filter === 'all' || 
         (filter === 'active' && !user.blocked) ||
@@ -55,21 +64,27 @@ const Users = () => {
     });
   }, [users, searchTerm, filter]);
 
+  const handleUserUpdate = useCallback((updatedUser) => {
+    setUsers(prevUsers => prevUsers.map(u => u.uid === updatedUser.uid ? updatedUser : u));
+    fetchUsers(); // Re-fetch to ensure consistency
+  }, [fetchUsers]);
 
   const handleAction = async (action, user, reason = '') => {
-    if (!user) return;
+    if (!user || !user.uid) return;
     setLoading(true);
     
     const userRef = doc(db, FIRESTORE_COLLECTIONS.users, user.uid);
     let updateData = {};
-    let log = { action, targetUid: user.uid };
+    let logAction = '';
 
     switch(action) {
         case 'block_user':
             updateData = { blocked: true };
+            logAction = 'Bloqueio de usuário';
             break;
         case 'unblock_user':
             updateData = { blocked: false };
+            logAction = 'Desbloqueio de usuário';
             break;
         default:
             setLoading(false);
@@ -78,13 +93,13 @@ const Users = () => {
 
     try {
         await updateDoc(userRef, updateData);
-        await logAdminAction(log.action, { targetUid: log.targetUid, reason });
+        await logAdminAction(logAction, { targetUid: user.uid, reason });
         
         setUsers(prev => prev.map(u => u.uid === user.uid ? { ...u, ...updateData } : u));
         
     } catch (error) {
         console.error(`Falha ao ${action} o usuário:`, error);
-        setError(`Falha ao ${action} o usuário.`);
+        setError(`Falha ao executar a ação.`);
     } finally {
         setLoading(false);
         setConfirmModalOpen(false);
@@ -98,14 +113,13 @@ const Users = () => {
     setConfirmModalOpen(true);
   };
 
-
   if (error) return <div className="alert alert-danger">{error}</div>;
 
   return (
     <>
       <div className="page-header">
         <h1>Usuários</h1>
-        <button className="btn btn-primary" onClick={() => exportUsersToCSV(filteredUsers)}>Exportar CSV</button>
+        <button className="btn btn-primary" onClick={() => exportUsersToCSV(filteredUsers || [])}>Exportar CSV</button>
       </div>
 
       <div className="filters-bar card card-body">
@@ -127,18 +141,18 @@ const Users = () => {
           <div className="table-wrap">
               <table className="table">
                   <thead>
-                      <tr><th>Email</th><th>UID</th><th>Pontos</th><th>Cadastro</th><th>Status</th><th></th></tr>
+                      <tr><th>Email</th><th>UID</th><th>Pontos</th><th>Cadastro</th><th>Status</th><th>Ações</th></tr>
                   </thead>
                   <tbody>
-                  {loading && users.length === 0 ? (
+                  {loading && !users.length ? (
                       <tr><td colSpan="6">Carregando...</td></tr>
-                  ) : filteredUsers.length > 0 ? (
-                      filteredUsers.map(user => (
+                  ) : (filteredUsers || []).length > 0 ? (
+                      (filteredUsers || []).map(user => (
                           <tr key={user.uid}>
-                              <td>{user.email || 'N/A'}</td>
-                              <td>{user.uid.substring(0,8)}...</td>
-                              <td>{user.points || 0}</td>
-                              <td>{user.createdAt ? formatDateTime(user.createdAt.toDate()) : 'N/A'}</td>
+                              <td>{user.email || 'Não informado'}</td>
+                              <td>{getShortUid(user.uid)}</td>
+                              <td>{formatPoints(user.points, '0')}</td>
+                              <td>{formatDateTime(user.createdAt)}</td>
                               <td>{user.blocked ? <span className="status-badge status-rejected">Bloqueado</span> : <span className="status-badge status-paid">Ativo</span>}</td>
                               <td className="actions-col">
                                   <button className="btn btn-sm btn-ghost" onClick={() => { setSelectedUser(user); setDetailsModalOpen(true); }}>Detalhes</button>
@@ -160,7 +174,7 @@ const Users = () => {
       </div>
 
       {isDetailsModalOpen && <UserDetailsModal user={selectedUser} onClose={() => setDetailsModalOpen(false)} />} 
-      {isPointsModalOpen && <AdjustPointsModal user={selectedUser} onClose={() => setPointsModalOpen(false)} onSave={() => { /* re-fetch or update state */ }} />} 
+      {isPointsModalOpen && <AdjustPointsModal user={selectedUser} onClose={() => setPointsModalOpen(false)} onSave={handleUserUpdate} />} 
       
       {isConfirmModalOpen && (
           <ConfirmModal
