@@ -1,7 +1,7 @@
 
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
-import { auth } from './firebase';
+import { auth, ADMIN_UID } from './firebase';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Users from './pages/Users';
@@ -17,12 +17,6 @@ import AccessDenied from './components/AccessDenied';
 const App = () => {
   const [user, loading] = useAuthState(auth);
 
-  // Ensure VITE_FIREBASE_ADMIN_UID is set, otherwise no one can be admin.
-  const adminUid = import.meta.env.VITE_FIREBASE_ADMIN_UID;
-  if (!adminUid) {
-      console.error("VITE_FIREBASE_ADMIN_UID is not defined in .env file.");
-  }
-
   if (loading) {
     return <div className="loading-screen">Carregando autenticação...</div>;
   }
@@ -37,7 +31,7 @@ const App = () => {
   }
 
   // Check if the logged-in user is the admin.
-  const isAdmin = user.uid === adminUid;
+  const isAdmin = user.uid === ADMIN_UID;
 
   return (
       <Layout>
