@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Generic function to check for admin role
+    function isAdmin() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Users can read and update their own data, but cannot change protected fields like points.
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId;
+      
+      // Admin can read all user documents
+      allow get, list: if isAdmin();
+    }
+
+    // Notifications are private to each user
+    match /users/{userId}/notifications/{notificationId} {
+      allow read, list: if request.auth.uid == userId;
+    }
+
+    // Only admin can read all withdrawal requests.
+    // Users can only read their own requests and create new ones.
+    match /withdrawRequests/{requestId} {
+      allow get: if request.auth.uid == resource.data.uid;
+      allow list: if request.auth.uid == request.query.uid; // Allows querying own requests
+      allow create: if request.auth.uid == request.resource.data.uid 
+                      && request.resource.data.status == 'pending'
+                      && request.resource.data.pointsRefunded == false;
+      
+      // Admin can do anything
+      allow read, write, update: if isAdmin();
+    }
+
+    // Admin logs are only for admins
+    match /adminLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    // App configuration can be read by anyone, but only written by admins
+    match /appConfig/{configId} {
+      allow get: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // Referral related collections - assuming only admins manage them directly
+    match /referralPendingFirstWithdrawalRewards/{rewardId} {
+        allow read, write: if isAdmin();
+    }
+  }
+}

@@ -1,145 +1,211 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-} from 'firebase/firestore';
-import { db } from '../firebase.js';
-import WithdrawTable from '../components/WithdrawTable.jsx';
-import {
-  FIRESTORE_COLLECTIONS,
-  WITHDRAW_REQUEST_FIELDS,
-  mapWithdrawRequestDoc,
-} from '../firestoreSchema.js';
 
-const FILTERS = [
-  { key: 'all', label: 'Todos' },
-  { key: 'pending', label: 'Pendentes' },
-  { key: 'approved', label: 'Aprovados' },
-  { key: 'rejected', label: 'Rejeitados' },
-  { key: 'paid', label: 'Pagos' },
-];
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase.js';
+import { Link } from 'react-router-dom';
+import { FIRESTORE_COLLECTIONS, mapWithdrawRequestDoc, mapUserDoc, mapGlobalNoticeDoc, mapAdminLogDoc } from '../firestoreSchema.js';
+import { formatCurrency, formatPoints, formatDateTime } from '../utils/formatters.js';
+import StatusBadge from '../components/StatusBadge.jsx';
+import StatCard from '../components/StatCard.jsx';
+
+const safeSum = (arr, field) => arr.reduce((acc, item) => acc + (Number(item[field]) || 0), 0);
 
 export default function Dashboard() {
-  const [requests, setRequests] = useState([]);
+  const [data, setData] = useState({ users: [], withdrawRequests: [], appConfig: {}, globalNotifications: [], adminLogs: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [search, setSearch] = useState('');
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    setError('');
-    const q = query(
-      collection(db, FIRESTORE_COLLECTIONS.withdrawRequests),
-      orderBy(WITHDRAW_REQUEST_FIELDS.createdAt, 'desc')
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list = snap.docs.map(mapWithdrawRequestDoc);
-        setRequests(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.error('Firestore listener error:', err);
-        setError(
-          err.code === 'permission-denied'
-            ? 'Sem permissão para ler withdrawRequests. Verifique as regras do Firestore.'
-            : `Erro ao carregar saques: ${err.message}`
-        );
-        setLoading(false);
-      }
-    );
-    return () => unsub();
+    setError(null);
+    try {
+      const collections = {
+        users: FIRESTORE_COLLECTIONS.users,
+        withdrawRequests: FIRESTORE_COLLECTIONS.withdrawRequests,
+        appConfig: FIRESTORE_COLLECTIONS.appConfig,
+        globalNotifications: FIRESTORE_COLLECTIONS.globalNotifications,
+        adminLogs: FIRESTORE_COLLECTIONS.adminLogs
+      };
+
+      const [usersSnap, withdrawRequestsSnap, appConfigSnap, globalNotificationsSnap, adminLogsSnap] = await Promise.all([
+        getDocs(query(collection(db, collections.users))),
+        getDocs(query(collection(db, collections.withdrawRequests), orderBy('createdAt', 'desc'))),
+        getDocs(query(collection(db, collections.appConfig))),
+        getDocs(query(collection(db, collections.globalNotifications))),
+        getDocs(query(collection(db, collections.adminLogs), orderBy('timestamp', 'desc'), limit(5)))
+      ]);
+
+      setData({
+        users: usersSnap.docs.map(mapUserDoc),
+        withdrawRequests: withdrawRequestsSnap.docs.map(mapWithdrawRequestDoc),
+        appConfig: appConfigSnap.docs.length > 0 ? appConfigSnap.docs[0].data() : {},
+        globalNotifications: globalNotificationsSnap.docs.map(mapGlobalNoticeDoc),
+        adminLogs: adminLogsSnap.docs.map(mapAdminLogDoc)
+      });
+    } catch (err) {
+      console.error("Falha ao carregar dados do dashboard:", err);
+      setError("Não foi possível carregar os dados do dashboard.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const counts = useMemo(() => {
-    const c = { pending: 0, approved: 0, rejected: 0, paid: 0 };
-    for (const r of requests) {
-      if (c[r.status] !== undefined) c[r.status] += 1;
-    }
-    return c;
-  }, [requests]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return requests.filter((r) => {
-      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
-      if (!term) return true;
-      const haystack = [r.email, r.fullName, r.pixKey]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [requests, statusFilter, search]);
+  const stats = useMemo(() => {
+    const { users, withdrawRequests, globalNotifications, appConfig } = data;
+    const withdrawByStatus = status => withdrawRequests.filter(r => r.status === status);
+    
+    const pendingWithdraws = withdrawByStatus('pending');
+    const paidWithdraws = withdrawByStatus('paid');
+    
+    const topUsersByPoints = [...users].sort((a, b) => (b.points || 0) - (a.points || 0)).slice(0, 5);
+
+    return {
+      totalUsers: users.length,
+      activeUsers: users.filter(u => !u.isBlocked).length,
+      pendingWithdrawsSum: safeSum(pendingWithdraws, 'amount'),
+      pendingWithdrawsCount: pendingWithdraws.length,
+      totalPaidSum: safeSum(paidWithdraws, 'amount'),
+      totalPointsInCirculation: safeSum(users, 'points'),
+      activeNotices: globalNotifications.filter(n => n.isActive).length,
+      quickSettings: { 
+        ...appConfig, 
+        globalNoticeActive: globalNotifications.some(n => n.isActive) 
+      },
+      topUsers: topUsersByPoints,
+    };
+  }, [data]);
+
+  if (loading) return <div className="loading-screen">Carregando Dashboard...</div>;
+  if (error) return <div className="page-header"><h1>Erro</h1><p className="muted">{error}</p></div>;
 
   return (
-    <div className="dashboard" data-testid="dashboard-page">
-      <header className="page-header">
+    <>
+      <div className="page-header">
         <div>
           <h1>Dashboard</h1>
-          <p className="muted">Gerencie as solicitações de saque do WatchMoney.</p>
+          <p className="muted">Visão geral e estatísticas do sistema.</p>
         </div>
-      </header>
+      </div>
 
-      {/* Cards de estatísticas */}
-      <section className="stats-grid">
-        <StatCard label="Pendentes" value={counts.pending} accent="pending" testid="stat-pending" />
-        <StatCard label="Aprovados" value={counts.approved} accent="approved" testid="stat-approved" />
-        <StatCard label="Rejeitados" value={counts.rejected} accent="rejected" testid="stat-rejected" />
-        <StatCard label="Pagos" value={counts.paid} accent="paid" testid="stat-paid" />
-      </section>
+      <div className="stats-grid-4">
+          <StatCard title="Usuários Ativos" value={stats.activeUsers} />
+          <StatCard title="Saques Pendentes" value={formatCurrency(stats.pendingWithdrawsSum)} subValue={`${stats.pendingWithdrawsCount} solicitações`} />
+          <StatCard title="Total Pago (realizado)" value={formatCurrency(stats.totalPaidSum)} />
+          <StatCard title="Pontos em Circulação" value={formatPoints(stats.totalPointsInCirculation)} />
+      </div>
 
-      {/* Filtros e busca */}
-      <section className="toolbar">
-        <div className="filter-tabs" role="tablist" data-testid="filter-tabs">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              className={'filter-tab' + (statusFilter === f.key ? ' active' : '')}
-              onClick={() => setStatusFilter(f.key)}
-              data-testid={`filter-${f.key}`}
-            >
-              {f.label}
-              {f.key !== 'all' && <span className="filter-count">{counts[f.key] ?? 0}</span>}
-            </button>
-          ))}
+      <div className="dashboard-grid">
+        <div className="dashboard-column">
+          <RecentWithdrawsCard withdrawRequests={data.withdrawRequests} />
+          <TopUsersCard topUsers={stats.topUsers} />
         </div>
-
-        <div className="search-box">
-          <span className="search-icon">⌕</span>
-          <input
-            type="search"
-            placeholder="Buscar por e-mail, nome ou chave Pix…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            data-testid="search-input"
-          />
+        <div className="dashboard-column">
+            <QuickSettingsCard settings={stats.quickSettings} />
+            <RecentLogsCard adminLogs={data.adminLogs} />
         </div>
-      </section>
-
-      {error && <div className="alert alert-error" data-testid="dashboard-error">{error}</div>}
-
-      <section className="card table-card">
-        <WithdrawTable
-          items={filtered}
-          loading={loading}
-          isFiltered={statusFilter !== 'all' || !!search.trim()}
-        />
-      </section>
-    </div>
+      </div>
+    </>
   );
 }
 
-function StatCard({ label, value, accent, testid }) {
-  return (
-    <div className={`stat-card stat-${accent}`} data-testid={testid}>
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      <div className={`stat-accent stat-${accent}-accent`} />
+// Sub-componentes para clareza
+
+const RecentWithdrawsCard = ({ withdrawRequests }) => (
+  <div className="card">
+    <div className="card-header">
+      <h2 className="card-title">Últimos Saques Solicitados</h2>
     </div>
-  );
-}
+    {withdrawRequests.length > 0 ? (
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Usuário</th><th>Valor</th><th>Status</th></tr></thead>
+          <tbody>
+            {withdrawRequests.slice(0, 5).map(req => (
+              <tr key={req.id}>
+                <td>{req.userEmail || req.userId.substring(0, 8)}</td>
+                <td>{formatCurrency(req.amount)}</td>
+                <td><StatusBadge status={req.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="card-body"><p className="muted">Nenhuma solicitação de saque recente.</p></div>
+    )}
+    <div className="card-footer">
+      <Link to="/financeiro" className="btn btn-sm btn-ghost">Ver Todos os Saques</Link>
+    </div>
+  </div>
+);
+
+const TopUsersCard = ({ topUsers }) => (
+  <div className="card">
+    <div className="card-header">
+      <h2 className="card-title">Top 5 Usuários (por pontos)</h2>
+    </div>
+    {topUsers.length > 0 ? (
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Usuário</th><th>Pontos</th></tr></thead>
+          <tbody>
+            {topUsers.map(user => (
+              <tr key={user.id}>
+                <td>{user.email}</td>
+                <td>{formatPoints(user.points)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="card-body"><p className="muted">Não há usuários suficientes para exibir.</p></div>
+    )}
+    <div className="card-footer">
+      <Link to="/usuarios" className="btn btn-sm btn-ghost">Ver Todos os Usuários</Link>
+    </div>
+  </div>
+);
+
+const QuickSettingsCard = ({ settings }) => (
+    <div className="card">
+        <div className="card-header"><h2 className="card-title">Configurações Rápidas</h2></div>
+        <div className="card-body">
+          <SettingItem label="Saques" value={settings.withdrawalsEnabled ? "Ativados" : "Desativados"} />
+          <SettingItem label="Modo Manutenção" value={settings.maintenanceMode ? "Ativo" : "Inativo"} />
+          <SettingItem label="Pontos por Real" value={formatPoints(settings.pointsPerReal)} />
+          <SettingItem label="Saque Mínimo" value={formatCurrency(settings.minWithdrawalAmount)} />
+        </div>
+        <div className="card-footer">
+           <Link to="/configuracoes" className="btn btn-sm btn-ghost">Alterar Configurações</Link>
+       </div>
+   </div>
+);
+
+const RecentLogsCard = ({ adminLogs }) => (
+    <div className="card">
+        <div className="card-header"><h2 className="card-title">Logs de Atividade Recente</h2></div>
+        <div className="card-body">
+           {adminLogs.length > 0 ? adminLogs.map(log => (
+               <div key={log.id} className="log-item-dashboard">
+                  <p><strong>{log.adminEmail || 'Sistema'}</strong> {log.action}</p>
+                  <p className="muted text-sm">{formatDateTime(log.timestamp)}</p>
+               </div>
+           )) : <p className="muted">Nenhum log recente.</p>}
+        </div>
+        <div className="card-footer">
+           <Link to="/logs" className="btn btn-sm btn-ghost">Ver Todos os Logs</Link>
+       </div>
+   </div>
+);
+
+const SettingItem = ({ label, value }) => (
+    <div className="detail-row">
+        <span className="detail-label">{label}</span>
+        <span className="detail-value">{value ?? 'Não definido'}</span>
+    </div>
+);

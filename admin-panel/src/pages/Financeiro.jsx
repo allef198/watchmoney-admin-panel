@@ -4,21 +4,28 @@ import {
   onSnapshot,
   orderBy,
   query,
+  doc,
+  writeBatch,
+  serverTimestamp
 } from 'firebase/firestore';
-import { db } from '../firebase.js';
+import { db, auth } from '../firebase.js';
 import {
   FIRESTORE_COLLECTIONS,
-  WITHDRAW_REQUEST_FIELDS,
+  ADMIN_LOG_FIELDS,
   mapWithdrawRequestDoc,
 } from '../firestoreSchema.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import {
-  MISSING,
   formatCurrency,
   formatDateTime,
   formatPoints,
   toNumber,
+  MISSING
 } from '../utils/formatters.js';
+import WithdrawDetailsModal from '../components/WithdrawDetailsModal';
+import AdminNoteModal from '../components/AdminNoteModal';
+import ConfirmModal from '../components/ConfirmModal';
+
 
 const STATUS_FILTERS = [
   { key: 'all', label: 'Todos' },
@@ -28,198 +35,210 @@ const STATUS_FILTERS = [
   { key: 'rejected', label: 'Rejeitados' },
 ];
 
-const STATUS_CARDS = [
-  { key: 'pending', label: 'Pendentes', accent: 'pending' },
-  { key: 'approved', label: 'Aprovados', accent: 'approved' },
-  { key: 'paid', label: 'Pagos', accent: 'paid' },
-  { key: 'rejected', label: 'Rejeitados', accent: 'rejected' },
+const DATE_FILTERS = [
+    { key: 'all', label: 'Qualquer Data' },
+    { key: 'today', label: 'Hoje' },
+    { key: 'last7', label: 'Últimos 7 dias' },
+    { key: 'last30', label: 'Últimos 30 dias' },
 ];
 
-function sumAmount(items) {
-  return items.reduce((total, item) => total + (toNumber(item.amountRequested) ?? 0), 0);
-}
+const SORT_OPTIONS = [
+    { key: 'most-recent', label: 'Mais Recentes' },
+    { key: 'oldest', label: 'Mais Antigos' },
+    { key: 'highest-value', label: 'Maior Valor' },
+    { key: 'lowest-value', label: 'Menor Valor' },
+];
 
-export default function Financeiro() {
+const Financeiro = () => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('all');
+  const [sort, setSort] = useState('most-recent');
+  const [search, setSearch] = useState('');
+
+  const [modal, setModal] = useState({ type: null, request: null }); // details, note, approve, reject, pay
+  const [feedback, setFeedback] = useState(null);
 
   useEffect(() => {
-    setLoading(true);
-    setError('');
-    const q = query(
-      collection(db, FIRESTORE_COLLECTIONS.withdrawRequests),
-      orderBy(WITHDRAW_REQUEST_FIELDS.createdAt, 'desc')
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
+    const q = query(collection(db, FIRESTORE_COLLECTIONS.withdrawRequests), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
         setRequests(snap.docs.map(mapWithdrawRequestDoc));
         setLoading(false);
-      },
-      (err) => {
-        console.error('Firestore finance listener error:', err);
-        setError(
-          err.code === 'permission-denied'
-            ? 'Sem permissão para ler withdrawRequests. Verifique as regras do Firestore.'
-            : `Erro ao carregar financeiro: ${err.message}`
-        );
+    }, (err) => {
+        setError(`Erro ao carregar saques: ${err.message}`);
         setLoading(false);
-      }
-    );
+    });
     return () => unsub();
   }, []);
 
-  const summary = useMemo(() => {
-    const base = {
-      pending: { count: 0, total: 0 },
-      approved: { count: 0, total: 0 },
-      paid: { count: 0, total: 0 },
-      rejected: { count: 0, total: 0 },
-    };
+  const filteredAndSortedRequests = useMemo(() => {
+    let filtered = requests;
 
-    for (const request of requests) {
-      if (!base[request.status]) continue;
-      base[request.status].count += 1;
-      base[request.status].total += toNumber(request.amountRequested) ?? 0;
+    if (statusFilter !== 'all') filtered = filtered.filter(r => r.status === statusFilter);
+
+    if (dateFilter !== 'all') {
+        const now = new Date();
+        let limit = new Date();
+        if(dateFilter === 'today') limit.setHours(0,0,0,0);
+        if(dateFilter === 'last7') limit.setDate(now.getDate() - 7);
+        if(dateFilter === 'last30') limit.setDate(now.getDate() - 30);
+
+        filtered = filtered.filter(r => r.createdAt && r.createdAt.toDate() >= limit);
     }
 
-    return base;
-  }, [requests]);
+    if (search) {
+        const term = search.toLowerCase();
+        filtered = filtered.filter(r => 
+            (r.email || '').toLowerCase().includes(term) || 
+            (r.fullName || '').toLowerCase().includes(term) || 
+            r.uid.toLowerCase().includes(term) ||
+            (r.pixKey || '').toLowerCase().includes(term)
+        );
+    }
 
-  const totals = useMemo(() => ({
-    requested: sumAmount(requests),
-    paid: summary.paid.total,
-    pending: summary.pending.total,
-    rejected: summary.rejected.total,
-  }), [requests, summary]);
+    if (sort === 'highest-value') filtered.sort((a,b) => (b.amountRequested || 0) - (a.amountRequested || 0));
+    if (sort === 'lowest-value') filtered.sort((a,b) => (a.amountRequested || 0) - (b.amountRequested || 0));
+    // Dates are already sorted by most recent by default from Firestore query
+    if (sort === 'oldest') filtered.reverse();
 
-  const filtered = useMemo(() => {
-    if (statusFilter === 'all') return requests;
-    return requests.filter((request) => request.status === statusFilter);
-  }, [requests, statusFilter]);
+    return filtered;
+  }, [requests, statusFilter, dateFilter, search, sort]);
+
+    const summary = useMemo(() => {
+        const s = { pending: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, paid: { count: 0, total: 0 }, rejected: { count: 0, total: 0 } };
+        requests.forEach(r => {
+            if (s[r.status]) {
+                s[r.status].count++;
+                s[r.status].total += toNumber(r.amountRequested) || 0;
+            }
+        });
+        return s;
+    }, [requests]);
+
+  const handleAction = async (type, request, reason = null) => {
+      try {
+        const batch = writeBatch(db);
+        const requestRef = doc(db, FIRESTORE_COLLECTIONS.withdrawRequests, request.id);
+        const logRef = doc(collection(db, FIRESTORE_COLLECTIONS.adminLogs));
+
+        let newStatus = request.status;
+        let logAction = ``;
+
+        if (type === 'approve') { newStatus = 'approved'; logAction = 'approve_withdrawal'; }
+        if (type === 'reject') { newStatus = 'rejected'; logAction = 'reject_withdrawal'; }
+        if (type === 'pay') { newStatus = 'paid'; logAction = 'mark_withdrawal_paid'; }
+
+        const updateData = {
+            status: newStatus,
+            updatedAt: serverTimestamp(),
+            reviewedBy: auth.currentUser.uid,
+        };
+
+        if(type === 'reject') updateData.rejectionReason = reason;
+        if(type === 'pay') updateData.paidAt = serverTimestamp();
+
+        batch.update(requestRef, updateData);
+
+        batch.set(logRef, {
+            [ADMIN_LOG_FIELDS.action]: logAction,
+            [ADMIN_LOG_FIELDS.targetId]: request.id,
+            [ADMIN_LOG_FIELDS.targetUid]: request.uid,
+            [ADMIN_LOG_FIELDS.adminUid]: auth.currentUser.uid,
+            [ADMIN_LOG_FIELDS.previousStatus]: request.status,
+            [ADMIN_LOG_FIELDS.newStatus]: newStatus,
+            [ADMIN_LOG_FIELDS.reason]: reason || null,
+            [ADMIN_LOG_FIELDS.createdAt]: serverTimestamp(),
+        });
+
+        await batch.commit();
+        setFeedback({type: 'success', message: 'Ação executada com sucesso!'});
+      } catch (err) {
+        setFeedback({type: 'error', message: `Erro: ${err.message}`});
+      }
+      setModal({ type: null, request: null });
+  };
+  
+  const exportToCSV = () => {
+      const headers = ['ID do Saque', 'UID', 'Nome', 'Email', 'Valor', 'Pontos', 'Chave Pix', 'Tipo Pix', 'Status', 'Data de Solicitação', 'Observação Interna'];
+      const rows = filteredAndSortedRequests.map(r => 
+          [r.id, r.uid, r.fullName, r.email, r.amountRequested, r.pointsRequired, r.pixKey, r.pixKeyType, r.status, formatDateTime(r.createdAt), r.adminNote].join(',')
+      );
+      const csvContent = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'saques.csv';
+      link.click();
+  };
+
+  const copyToClipboard = (text) => {
+      navigator.clipboard.writeText(text).then(() => setFeedback({type: 'success', message: 'Copiado!'}));
+  }
 
   return (
-    <div className="dashboard" data-testid="finance-page">
-      <header className="page-header">
-        <div>
-          <h1>Financeiro</h1>
-          <p className="muted">Resumo financeiro das solicitações de saque.</p>
-        </div>
-      </header>
-
+    <div className="dashboard">
+      <h1>Financeiro</h1>
       <section className="stats-grid">
-        {STATUS_CARDS.map((card) => (
-          <FinanceCard
-            key={card.key}
-            label={card.label}
-            value={formatCurrency(summary[card.key].total)}
-            count={summary[card.key].count}
-            accent={card.accent}
-          />
-        ))}
+          <div className="stat-card">Pendentes: {summary.pending.count} ({formatCurrency(summary.pending.total)})</div>
+          <div className="stat-card">Aprovados: {summary.approved.count} ({formatCurrency(summary.approved.total)})</div>
+          <div className="stat-card">Pagos: {summary.paid.count} ({formatCurrency(summary.paid.total)})</div>
+          <div className="stat-card">Rejeitados: {summary.rejected.count} ({formatCurrency(summary.rejected.total)})</div>
       </section>
-
-      <section className="card settings-card finance-totals" data-testid="finance-totals">
-        <h3>Totais</h3>
-        <div className="settings-row">
-          <div className="settings-label">Total solicitado</div>
-          <div className="settings-value">{formatCurrency(totals.requested)}</div>
-        </div>
-        <div className="settings-row">
-          <div className="settings-label">Total pago</div>
-          <div className="settings-value">{formatCurrency(totals.paid)}</div>
-        </div>
-        <div className="settings-row">
-          <div className="settings-label">Total pendente</div>
-          <div className="settings-value">{formatCurrency(totals.pending)}</div>
-        </div>
-        <div className="settings-row">
-          <div className="settings-label">Total rejeitado</div>
-          <div className="settings-value">{formatCurrency(totals.rejected)}</div>
-        </div>
-      </section>
-
       <section className="toolbar">
-        <div className="filter-tabs" role="tablist" data-testid="finance-filter-tabs">
-          {STATUS_FILTERS.map((filter) => (
-            <button
-              key={filter.key}
-              className={'filter-tab' + (statusFilter === filter.key ? ' active' : '')}
-              onClick={() => setStatusFilter(filter.key)}
-              data-testid={`finance-filter-${filter.key}`}
-            >
-              {filter.label}
-              {filter.key !== 'all' && (
-                <span className="filter-count">{summary[filter.key]?.count ?? 0}</span>
-              )}
-            </button>
-          ))}
-        </div>
+          <input type="search" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} />
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>{STATUS_FILTERS.map(f=><option value={f.key}>{f.label}</option>)}</select>
+          <select value={dateFilter} onChange={e => setDateFilter(e.target.value)}>{DATE_FILTERS.map(f=><option value={f.key}>{f.label}</option>)}</select>
+          <select value={sort} onChange={e => setSort(e.target.value)}>{SORT_OPTIONS.map(o=><option value={o.key}>{o.label}</option>)}</select>
+          <button onClick={exportToCSV} className="btn">Exportar CSV</button>
       </section>
 
-      {error && <div className="alert alert-error" data-testid="finance-error">{error}</div>}
+      {feedback && <div className={`alert alert-${feedback.type}`}>{feedback.message}</div>}
 
-      <section className="card table-card">
-        <FinanceTable items={filtered} loading={loading} isFiltered={statusFilter !== 'all'} />
-      </section>
-    </div>
-  );
-}
-
-function FinanceCard({ label, value, count, accent }) {
-  return (
-    <div className={`stat-card stat-${accent}`} data-testid={`finance-stat-${accent}`}>
-      <div className="stat-label">{label}</div>
-      <div className="stat-value stat-value-money">{value}</div>
-      <div className="stat-subvalue">{count} {count === 1 ? 'pedido' : 'pedidos'}</div>
-      <div className={`stat-accent stat-${accent}-accent`} />
-    </div>
-  );
-}
-
-function FinanceTable({ items, loading, isFiltered }) {
-  if (loading) {
-    return <div className="empty-state" data-testid="finance-loading">Carregando financeiro…</div>;
-  }
-
-  if (!items.length) {
-    return (
-      <div className="empty-state" data-testid="finance-empty">
-        {isFiltered
-          ? 'Nenhum pedido encontrado com esse filtro.'
-          : 'Ainda não há pedidos de saque.'}
+      <div className="table-wrap">
+        {loading ? <p>Carregando...</p> : error ? <p>{error}</p> : 
+            <table className="withdraw-table">
+                <thead>
+                    <tr>
+                        <th>Usuário</th>
+                        <th>Valor</th>
+                        <th>Chave Pix</th>
+                        <th>Status</th>
+                        <th>Data</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filteredAndSortedRequests.map(r => (
+                        <tr key={r.id}>
+                            <td><div><strong>{r.fullName || MISSING}</strong><span className="muted">{r.email || MISSING}</span></div></td>
+                            <td>{formatCurrency(r.amountRequested)}</td>
+                            <td><div><span>{r.pixKey}</span><button onClick={()=>copyToClipboard(r.pixKey)}>Copiar</button></div></td>
+                            <td><StatusBadge status={r.status} /></td>
+                            <td>{formatDateTime(r.createdAt)}</td>
+                            <td className="actions-col">
+                                <button onClick={() => setModal({ type: 'details', request: r })}>Detalhes</button>
+                                {r.status === 'pending' && <button onClick={() => setModal({ type: 'approve', request: r })}>Aprovar</button>}
+                                {(r.status === 'pending' || r.status === 'approved') && <button onClick={() => setModal({ type: 'reject', request: r })}>Rejeitar</button>}
+                                {r.status === 'approved' && <button onClick={() => setModal({ type: 'pay', request: r })}>Pagar</button>}
+                                <button onClick={() => setModal({ type: 'note', request: r })}>Nota</button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        }
       </div>
-    );
-  }
 
-  return (
-    <div className="table-wrap">
-      <table className="withdraw-table" data-testid="finance-table">
-        <thead>
-          <tr>
-            <th>Data</th>
-            <th>E-mail</th>
-            <th>Nome</th>
-            <th className="num">Valor solicitado</th>
-            <th className="num">Pontos usados</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((request) => (
-            <tr key={request.id}>
-              <td className="cell-date">{formatDateTime(request.createdAt, '—')}</td>
-              <td>{request.email || MISSING}</td>
-              <td>{request.fullName || MISSING}</td>
-              <td className="num"><strong>{formatCurrency(request.amountRequested)}</strong></td>
-              <td className="num">{formatPoints(request.pointsRequired)}</td>
-              <td><StatusBadge status={request.status} /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {modal.type === 'details' && <WithdrawDetailsModal request={modal.request} isOpen={true} onClose={() => setModal({type:null, request:null})} />}
+      {modal.type === 'note' && <AdminNoteModal request={modal.request} isOpen={true} onClose={() => setModal({type:null, request:null})} onFeedback={setFeedback} />}
+      {['approve', 'pay'].includes(modal.type) && <ConfirmModal open={true} title={`Confirmar ${modal.type}`} description="Você tem certeza?" onConfirm={() => handleAction(modal.type, modal.request)} onClose={() => setModal({type:null, request:null})} />}
+      {modal.type === 'reject' && <ConfirmModal open={true} title="Rejeitar Saque" description="Qual o motivo?" requireReason={true} onConfirm={(reason) => handleAction('reject', modal.request, reason)} onClose={() => setModal({type:null, request:null})} />}
+
     </div>
   );
-}
+};
+
+export default Financeiro;

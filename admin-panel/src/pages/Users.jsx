@@ -1,259 +1,181 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase.js';
-import {
-  FIRESTORE_COLLECTIONS,
-  mapUserDoc,
-  mapWithdrawRequestDoc,
-} from '../firestoreSchema.js';
-import {
-  MISSING,
-  formatCurrency,
-  formatDateTime,
-  formatPoints,
-  timestampToMillis,
-  toNumber,
-} from '../utils/formatters.js';
 
-const STATUS_FILTERS = [
-  { key: 'all', label: 'Todos' },
-  { key: 'active', label: 'Ativos' },
-  { key: 'blocked', label: 'Bloqueados' },
-];
+import { useState, useEffect, useMemo } from 'react';
+import { collection, getDocs, query, where, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { db } from '../firebase';
+import { FIRESTORE_COLLECTIONS, mapUserDoc } from '../firestoreSchema';
+import { formatDateTime } from '../utils/formatters';
+import { exportUsersToCSV } from '../utils/export';
+import UserDetailsModal from '../components/UserDetailsModal';
+import AdjustPointsModal from '../components/AdjustPointsModal';
+import ConfirmModal from '../components/ConfirmModal';
+import { logAdminAction } from '../utils/logUtils';
 
-function buildWithdrawStats(requests) {
-  const stats = new Map();
-
-  for (const request of requests) {
-    if (!request.uid) continue;
-    const current = stats.get(request.uid) || {
-      count: 0,
-      paid: 0,
-      rejected: 0,
-    };
-    const amount = toNumber(request.amountRequested) ?? 0;
-    current.count += 1;
-    if (request.status === 'paid') current.paid += amount;
-    if (request.status === 'rejected') current.rejected += amount;
-    stats.set(request.uid, current);
-  }
-
-  return stats;
-}
-
-export default function Users() {
-  const navigate = useNavigate();
+const Users = () => {
   const [users, setUsers] = useState([]);
-  const [withdrawRequests, setWithdrawRequests] = useState([]);
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingWithdraws, setLoadingWithdraws] = useState(true);
-  const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filter, setFilter] = useState('all');
+
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [isDetailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [isPointsModalOpen, setPointsModalOpen] = useState(false);
+  const [isConfirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
 
   useEffect(() => {
-    setLoadingUsers(true);
-    const unsub = onSnapshot(
-      collection(db, FIRESTORE_COLLECTIONS.users),
-      (snap) => {
-        const list = snap.docs
-          .map(mapUserDoc)
-          .sort((a, b) => timestampToMillis(b.updatedAt || b.createdAt) - timestampToMillis(a.updatedAt || a.createdAt));
-        setUsers(list);
-        setLoadingUsers(false);
-      },
-      (err) => {
-        setError(
-          err.code === 'permission-denied'
-            ? 'Sem permissão para ler users. Verifique as regras do Firestore.'
-            : `Erro ao carregar usuários: ${err.message}`
-        );
-        setLoadingUsers(false);
+    const fetchUsers = async () => {
+      setLoading(true);
+      try {
+        const usersCollection = collection(db, FIRESTORE_COLLECTIONS.users);
+        const usersSnapshot = await getDocs(usersCollection);
+        const usersList = usersSnapshot.docs.map(mapUserDoc);
+        setUsers(usersList);
+      } catch (err) {
+        console.error(err);
+        setError('Não foi possível carregar os usuários.');
       }
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    setLoadingWithdraws(true);
-    const unsub = onSnapshot(
-      collection(db, FIRESTORE_COLLECTIONS.withdrawRequests),
-      (snap) => {
-        setWithdrawRequests(snap.docs.map(mapWithdrawRequestDoc));
-        setLoadingWithdraws(false);
-      },
-      (err) => {
-        setError(
-          err.code === 'permission-denied'
-            ? 'Sem permissão para ler withdrawRequests. Verifique as regras do Firestore.'
-            : `Erro ao carregar saques dos usuários: ${err.message}`
-        );
-        setLoadingWithdraws(false);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  const withdrawStats = useMemo(() => buildWithdrawStats(withdrawRequests), [withdrawRequests]);
-
-  const counts = useMemo(() => {
-    const blocked = users.filter((user) => user.blocked === true).length;
-    return {
-      total: users.length,
-      active: users.length - blocked,
-      blocked,
-      points: users.reduce((total, user) => total + (toNumber(user.points) ?? 0), 0),
+      setLoading(false);
     };
-  }, [users]);
+    fetchUsers();
+  }, []);
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return users.filter((user) => {
-      if (statusFilter === 'active' && user.blocked === true) return false;
-      if (statusFilter === 'blocked' && user.blocked !== true) return false;
-      if (!term) return true;
-      return [user.email, user.uid]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = !searchTerm || 
+        user.email?.toLowerCase().includes(searchLower) || 
+        user.uid.toLowerCase().includes(searchLower);
+
+      const matchesFilter = filter === 'all' || 
+        (filter === 'active' && !user.blocked) ||
+        (filter === 'blocked' && user.blocked);
+
+      return matchesSearch && matchesFilter;
     });
-  }, [users, search, statusFilter]);
+  }, [users, searchTerm, filter]);
 
-  const loading = loadingUsers || loadingWithdraws;
-  const openUser = (userUid) => navigate(`/usuarios/${encodeURIComponent(userUid)}`);
+
+  const handleAction = async (action, user, reason = '') => {
+    if (!user) return;
+    setLoading(true);
+    
+    const userRef = doc(db, FIRESTORE_COLLECTIONS.users, user.uid);
+    let updateData = {};
+    let log = { action, targetUid: user.uid };
+
+    switch(action) {
+        case 'block_user':
+            updateData = { blocked: true };
+            break;
+        case 'unblock_user':
+            updateData = { blocked: false };
+            break;
+        default:
+            setLoading(false);
+            return;
+    }
+
+    try {
+        await updateDoc(userRef, updateData);
+        await logAdminAction(log.action, { targetUid: log.targetUid, reason });
+        
+        setUsers(prev => prev.map(u => u.uid === user.uid ? { ...u, ...updateData } : u));
+        
+    } catch (error) {
+        console.error(`Falha ao ${action} o usuário:`, error);
+        setError(`Falha ao ${action} o usuário.`);
+    } finally {
+        setLoading(false);
+        setConfirmModalOpen(false);
+        setConfirmAction(null);
+    }
+  };
+
+  const openConfirmation = (action, user) => {
+    setSelectedUser(user);
+    setConfirmAction({ action });
+    setConfirmModalOpen(true);
+  };
+
+
+  if (error) return <div className="alert alert-danger">{error}</div>;
 
   return (
-    <div className="dashboard" data-testid="users-page">
-      <header className="page-header">
-        <div>
-          <h1>Usuários</h1>
-          <p className="muted">Acompanhe contas, pontos e histórico de saques.</p>
-        </div>
-      </header>
+    <>
+      <div className="page-header">
+        <h1>Usuários</h1>
+        <button className="btn btn-primary" onClick={() => exportUsersToCSV(filteredUsers)}>Exportar CSV</button>
+      </div>
 
-      <section className="stats-grid">
-        <StatCard label="Total de usuários" value={counts.total} accent="pending" testid="users-total" />
-        <StatCard label="Usuários ativos" value={counts.active} accent="paid" testid="users-active" />
-        <StatCard label="Usuários bloqueados" value={counts.blocked} accent="rejected" testid="users-blocked" />
-        <StatCard label="Pontos totais" value={formatPoints(counts.points)} accent="approved" testid="users-points" compact />
-      </section>
-
-      <section className="toolbar">
-        <div className="filter-tabs" role="tablist" data-testid="users-filter-tabs">
-          {STATUS_FILTERS.map((filter) => (
-            <button
-              key={filter.key}
-              className={'filter-tab' + (statusFilter === filter.key ? ' active' : '')}
-              onClick={() => setStatusFilter(filter.key)}
-              data-testid={`users-filter-${filter.key}`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="search-box">
-          <span className="search-icon">⌕</span>
-          <input
-            type="search"
-            placeholder="Buscar por e-mail ou UID..."
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            data-testid="users-search"
+      <div className="filters-bar card card-body">
+         <input 
+            type="text" 
+            placeholder="Buscar por email ou UID..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="form-control"
           />
-        </div>
-      </section>
+          <select value={filter} onChange={(e) => setFilter(e.target.value)} className="form-control">
+              <option value="all">Todos</option>
+              <option value="active">Ativos</option>
+              <option value="blocked">Bloqueados</option>
+          </select>
+      </div>
 
-      {error && <div className="alert alert-error" data-testid="users-error">{error}</div>}
-
-      <section className="card table-card">
-        {loading ? (
-          <div className="empty-state" data-testid="users-loading">Carregando usuários...</div>
-        ) : filtered.length === 0 ? (
-          <div className="empty-state" data-testid="users-empty">
-            {search || statusFilter !== 'all'
-              ? 'Nenhum usuário encontrado com esses filtros.'
-              : 'Ainda não há usuários cadastrados.'}
-          </div>
-        ) : (
+      <div className="card">
           <div className="table-wrap">
-            <table className="withdraw-table" data-testid="users-table">
-              <thead>
-                <tr>
-                  <th>E-mail</th>
-                  <th>UID</th>
-                  <th className="num">Pontos atuais</th>
-                  <th className="num">Total de saques</th>
-                  <th className="num">Total pago</th>
-                  <th className="num">Total rejeitado</th>
-                  <th>Última atividade</th>
-                  <th>Status</th>
-                  <th className="actions-col">Detalhes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((user) => {
-                  const stats = withdrawStats.get(user.uid) || { count: 0, paid: 0, rejected: 0 };
-                  return (
-                    <tr
-                      key={user.uid}
-                      className="clickable-row"
-                      data-testid={`user-row-${user.uid}`}
-                      tabIndex={0}
-                      onClick={(event) => {
-                        if (event.target.closest('a, button')) return;
-                        openUser(user.uid);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') openUser(user.uid);
-                      }}
-                    >
-                      <td>
-                        <Link className="table-link" to={`/usuarios/${encodeURIComponent(user.uid)}`}>
-                          {user.email || MISSING}
-                        </Link>
-                      </td>
-                      <td className="mono-cell">{user.uid}</td>
-                      <td className="num">{formatPoints(user.points)}</td>
-                      <td className="num">{stats.count}</td>
-                      <td className="num">{formatCurrency(stats.paid)}</td>
-                      <td className="num">{formatCurrency(stats.rejected)}</td>
-                      <td className="cell-date">{formatDateTime(user.updatedAt || user.createdAt)}</td>
-                      <td><AccountStatusBadge blocked={user.blocked} /></td>
-                      <td className="actions-col">
-                        <Link className="btn btn-sm btn-ghost" to={`/usuarios/${encodeURIComponent(user.uid)}`}>
-                          Abrir
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+              <table className="table">
+                  <thead>
+                      <tr><th>Email</th><th>UID</th><th>Pontos</th><th>Cadastro</th><th>Status</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                  {loading && users.length === 0 ? (
+                      <tr><td colSpan="6">Carregando...</td></tr>
+                  ) : filteredUsers.length > 0 ? (
+                      filteredUsers.map(user => (
+                          <tr key={user.uid}>
+                              <td>{user.email || 'N/A'}</td>
+                              <td>{user.uid.substring(0,8)}...</td>
+                              <td>{user.points || 0}</td>
+                              <td>{user.createdAt ? formatDateTime(user.createdAt.toDate()) : 'N/A'}</td>
+                              <td>{user.blocked ? <span className="status-badge status-rejected">Bloqueado</span> : <span className="status-badge status-paid">Ativo</span>}</td>
+                              <td className="actions-col">
+                                  <button className="btn btn-sm btn-ghost" onClick={() => { setSelectedUser(user); setDetailsModalOpen(true); }}>Detalhes</button>
+                                  <button className="btn btn-sm btn-ghost" onClick={() => { setSelectedUser(user); setPointsModalOpen(true); }}>Ajustar</button>
+                                  {user.blocked ? (
+                                      <button className="btn btn-sm btn-ghost" onClick={() => openConfirmation('unblock_user', user)}>Desbloquear</button>
+                                  ) : (
+                                      <button className="btn btn-sm btn-danger" onClick={() => openConfirmation('block_user', user)}>Bloquear</button>
+                                  )}
+                              </td>
+                          </tr>
+                      ))
+                  ) : (
+                      <tr><td colSpan="6" className="text-center muted">Nenhum usuário encontrado.</td></tr>
+                  )}
+                  </tbody>
+              </table>
           </div>
-        )}
-      </section>
-    </div>
-  );
-}
+      </div>
 
-function StatCard({ label, value, accent, testid, compact = false }) {
-  return (
-    <div className={`stat-card stat-${accent}`} data-testid={testid}>
-      <div className="stat-label">{label}</div>
-      <div className={'stat-value' + (compact ? ' stat-value-money' : '')}>{value}</div>
-      <div className={`stat-accent stat-${accent}-accent`} />
-    </div>
+      {isDetailsModalOpen && <UserDetailsModal user={selectedUser} onClose={() => setDetailsModalOpen(false)} />} 
+      {isPointsModalOpen && <AdjustPointsModal user={selectedUser} onClose={() => setPointsModalOpen(false)} onSave={() => { /* re-fetch or update state */ }} />} 
+      
+      {isConfirmModalOpen && (
+          <ConfirmModal
+              open={isConfirmModalOpen}
+              title={confirmAction?.action.includes('unblock') ? "Confirmar Desbloqueio" : "Confirmar Bloqueio"}
+              description={`Você tem certeza que deseja ${confirmAction?.action.includes('unblock') ? 'desbloquear' : 'bloquear'} este usuário?`}
+              onConfirm={(reason) => handleAction(confirmAction.action, selectedUser, reason)}
+              onClose={() => setConfirmModalOpen(false)}
+              loading={loading}
+              requireReason={confirmAction?.action.includes('block')}
+              variant={confirmAction?.action.includes('unblock') ? 'primary' : 'danger'}
+          />
+      )}
+    </>
   );
-}
+};
 
-function AccountStatusBadge({ blocked }) {
-  return (
-    <span className={`status-badge ${blocked ? 'status-rejected' : 'status-paid'}`}>
-      <span className="status-dot" />
-      {blocked ? 'Bloqueado' : 'Ativo'}
-    </span>
-  );
-}
+export default Users;

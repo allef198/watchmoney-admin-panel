@@ -1,62 +1,78 @@
+
 import { NavLink } from 'react-router-dom';
-import { ADMIN_UID } from '../firebase.js';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { auth } from '../firebase';
 
-export default function Sidebar({ onLogout, user }) {
-  return (
-    <aside className="sidebar" data-testid="sidebar">
-      <div className="sidebar-brand">
-        <div className="brand-logo">W</div>
-        <div>
-          <div className="brand-title">WatchMoney</div>
-          <div className="brand-subtitle">Admin Panel</div>
-        </div>
-      </div>
+const NAV_LINKS = [
+    { to: '/', label: 'Dashboard', icon: '📊' },
+    { to: '/usuarios', label: 'Usuários', icon: '👥' },
+    { to: '/financeiro', label: 'Saques', icon: '💰' },
+    { to: '/convites', label: 'Convites', icon: '🤝' },
+    { to: '/anti-fraude', label: 'Anti-Fraude', icon: '🛡️' },
+    { to: '/notificacoes', label: 'Notificações', icon: '🔔' },
+    { to: '/configuracoes', label: 'Configurações', icon: '⚙️' },
+    { to: '/logs', label: 'Logs', icon: '📜' },
+];
 
-      <nav className="sidebar-nav">
-        <NavLink to="/" end className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-dashboard">
-          <span className="nav-icon">▦</span>
-          <span>Dashboard</span>
-        </NavLink>
-        <NavLink to="/saques" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-saques">
-          <span className="nav-icon">₿</span>
-          <span>Saques</span>
-        </NavLink>
-        <NavLink to="/financeiro" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-financeiro">
-          <span className="nav-icon">R$</span>
-          <span>Financeiro</span>
-        </NavLink>
-        <NavLink to="/usuarios" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-usuarios">
-          <span className="nav-icon">@</span>
-          <span>Usuários</span>
-        </NavLink>
-        <NavLink to="/logs" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-logs">
-          <span className="nav-icon">≡</span>
-          <span>Logs</span>
-        </NavLink>
-        <NavLink to="/configuracoes" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-config">
-          <span className="nav-icon">⚙</span>
-          <span>Configurações</span>
-        </NavLink>
-        <NavLink to="/aviso-global" className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} data-testid="nav-aviso-global">
-          <span className="nav-icon">!</span>
-          <span>Aviso global</span>
-        </NavLink>
-      </nav>
+const Sidebar = ({ isMobileOpen, closeMobileSidebar }) => {
+    const [user] = useAuthState(auth);
 
-      <div className="sidebar-footer">
-        <div className="user-card">
-          <div className="user-avatar">{(user?.email || '?').charAt(0).toUpperCase()}</div>
-          <div className="user-info">
-            <div className="user-email" title={user?.email}>{user?.email}</div>
-            <div className="user-role">
-              {user?.uid === ADMIN_UID ? 'Administrador' : 'Usuário'}
+    const handleLogout = () => {
+        if (confirm('Tem certeza que deseja sair?')) {
+            auth.signOut().catch(err => console.error('Falha ao fazer logout:', err));
+        }
+    };
+
+    const sidebarContent = (
+        <>
+            <div className="sidebar-brand">
+                <div className="brand-logo">W</div>
+                <div className="brand-info">
+                    <span className="brand-title">WatchMoney</span>
+                    <span className="brand-subtitle">Admin Panel</span>
+                </div>
             </div>
-          </div>
-        </div>
-        <button className="btn btn-ghost btn-block" onClick={onLogout} data-testid="logout-btn">
-          Sair
-        </button>
-      </div>
-    </aside>
-  );
-}
+
+            <nav className="sidebar-nav">
+                {NAV_LINKS.map(link => (
+                    <NavLink 
+                        key={link.to} 
+                        to={link.to} 
+                        className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} 
+                        onClick={closeMobileSidebar}
+                    >
+                        <span className="nav-icon">{link.icon}</span>
+                        <span>{link.label}</span>
+                    </NavLink>
+                ))}
+            </nav>
+
+            <footer className="sidebar-footer">
+                {user && (
+                     <div className="user-card">
+                        <div className="user-avatar">{user.email ? user.email.charAt(0).toUpperCase() : 'A'}</div>
+                        <div className="user-info">
+                            <span className="user-email" title={user.email}>{user.email}</span>
+                            <span className="user-role">Administrador</span>
+                        </div>
+                    </div>
+                )}
+                <button onClick={handleLogout} className="btn btn-ghost btn-block logout-btn-sidebar">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    <span>Sair</span>
+                </button>
+            </footer>
+        </>
+    );
+
+    return (
+        <>
+            <aside className={`sidebar ${isMobileOpen ? 'mobile-open' : ''}`}>
+                {sidebarContent}
+            </aside>
+            {isMobileOpen && <div className="sidebar-overlay" onClick={closeMobileSidebar}></div>}
+        </>
+    );
+};
+
+export default Sidebar;

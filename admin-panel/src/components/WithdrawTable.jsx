@@ -9,7 +9,6 @@ import { db, auth, ADMIN_UID } from '../firebase.js';
 import {
   ADMIN_LOG_FIELDS,
   FIRESTORE_COLLECTIONS,
-  WITHDRAW_REQUEST_FIELDS,
 } from '../firestoreSchema.js';
 import StatusBadge from './StatusBadge.jsx';
 import ConfirmModal from './ConfirmModal.jsx';
@@ -55,7 +54,7 @@ const ACTIONS = {
     variant: 'danger',
     requireReason: true,
     reasonPlaceholder: 'Ex.: Chave Pix incorreta…',
-    warning: 'A devolução de pontos deve ser feita com segurança em Cloud Function ou rotina transacional.',
+    warning: '', // Warning removed. Point refunds are now automatic.
     newStatus: 'rejected',
     logAction: 'reject',
   },
@@ -100,20 +99,19 @@ export default function WithdrawTable({ items, loading, isFiltered }) {
       const batch = writeBatch(db);
       const requestRef = doc(db, FIRESTORE_COLLECTIONS.withdrawRequests, req.id);
       const logRef = doc(collection(db, FIRESTORE_COLLECTIONS.adminLogs));
-      const requestFields = WITHDRAW_REQUEST_FIELDS;
       const logFields = ADMIN_LOG_FIELDS;
 
       const updateData = {
-        [requestFields.status]: cfg.newStatus,
-        [requestFields.updatedAt]: serverTimestamp(),
-        [requestFields.reviewedAt]: serverTimestamp(),
-        [requestFields.reviewedBy]: admin.uid,
+        status: cfg.newStatus,
+        updatedAt: serverTimestamp(),
+        reviewedAt: serverTimestamp(),
+        reviewedBy: admin.uid,
       };
       if (cfg.newStatus === 'rejected') {
-        updateData[requestFields.rejectionReason] = reason || '';
+        updateData.rejectionReason = reason || '';
       }
       if (cfg.newStatus === 'paid') {
-        updateData[requestFields.paidAt] = serverTimestamp();
+        updateData.paidAt = serverTimestamp();
       }
 
       batch.update(requestRef, updateData);
